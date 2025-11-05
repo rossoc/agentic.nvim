@@ -1,0 +1,4 @@
+column_width = 80
+indent_type = "Spaces"
+collapse_simple_statement = "Never"
+indent_width = 4
