@@ -1,7 +1,6 @@
----@class agentic.UserConfig
-local Config = {
-    --- Enable printing debug messages which can be read via `:messages`
-    debug = false,
-}
+local configDefault = require("agentic.config_default")
+
+---@type agentic.UserConfig
+local Config = vim.tbl_deep_extend("force", {}, configDefault)
 
 return Config

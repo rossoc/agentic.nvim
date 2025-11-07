@@ -12,7 +12,7 @@
       "$VIMRUNTIME/lua/vim/lsp",
       "$PWD/lua",
       "${3rd}/luv/library",
-      "$DEPS_PATH/luvit-meta/library"
+      "~/.local/share/nvim/lazy/nui.nvim/lua"
     ],
     "checkThirdParty": false
   },
