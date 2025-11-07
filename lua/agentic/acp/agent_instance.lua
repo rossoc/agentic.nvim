@@ -1,13 +1,23 @@
+-- According to the ACP protocol, a single agent process can handle multiple sessions.
+-- A session is an isolated conversation with its own state and and context.
+-- This file maintain one Agent process per provider.
+-- We should NOT spawn multiple agent processes, but create new sessions instead.
+-- Documentation for reference: https://agentclientprotocol.com/protocol/session-setup.md
+
 local Logger = require("agentic.utils.logger")
 
----@class agentic.state.Instance
+---@class agentic.acp.AgentInstance
 ---@field chat_widget agentic.ui.ChatWidget
 ---@field agent_client agentic.acp.ACPClient
 
----@class agentic.AgentInstance
+---@class agentic.acp.AgentInstance
 local AgentInstance = {}
 
---- Read the file content from a buffer if loaded, to get unsaved changes or from disk otherwise
+--- A Keyed list of agent instances by name
+---@type table<string, agentic.acp.ACPClient>
+AgentInstance.instances = {}
+
+--- Read the file content from a buffer if loaded, to get unsaved changes, or from disk otherwise
 ---@param abs_path string
 ---@return string[]|nil lines
 ---@return string|nil error
@@ -36,10 +46,13 @@ local function read_file_from_buf_or_disk(abs_path)
     end
 end
 
----@param tab_page_id integer
-function AgentInstance.make_instance(tab_page_id)
-    local ChatWidget = require("agentic.ui.chat_widget")
+---@param provider_name string
+function AgentInstance.get_instance(provider_name)
     local Client = require("agentic.acp.acp_client")
+
+    if AgentInstance.instances[provider_name] ~= nil then
+        return AgentInstance.instances[provider_name]
+    end
 
     local agent_client = Client:new({
         handlers = {
@@ -115,17 +128,23 @@ function AgentInstance.make_instance(tab_page_id)
         },
     })
 
-    local chat_widget = ChatWidget:new(tab_page_id, function(prompt)
-        agent_client:send_prompt(agent_client.state)
-    end)
+    AgentInstance.instances[provider_name] = agent_client
 
-    --- @type agentic.state.Instance
-    local instance = {
-        chat_widget = chat_widget,
-        agent_client = agent_client,
-    }
+    return agent_client
+end
+---Cleanup all active instances and processes
+---This is called automatically on VimLeavePre and signal handlers
+---Can also be called manually if needed
+function AgentInstance:cleanup_all()
+    for _name, instance in pairs(self.instances) do
+        if instance then
+            pcall(function()
+                instance:stop()
+            end)
+        end
+    end
 
-    return instance
+    self.instances = {}
 end
 
 return AgentInstance

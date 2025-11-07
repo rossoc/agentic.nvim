@@ -1,13 +1,11 @@
 local logger = require("agentic.utils.logger")
 local transport_module = require("agentic.acp.acp_transport")
-local uv = vim.uv or vim.loop
 
 ---FIXIT: try to delete convenience methods down below to not keep unused code
 
 ---@class agentic.acp.ACPClient
 ---@field config agentic.acp.ClientConfig
 ---@field id_counter number
----@field session_id number
 ---@field state agentic.acp.ClientConnectionState
 ---@field protocol_version number
 ---@field capabilities agentic.acp.ClientCapabilities
@@ -34,7 +32,6 @@ function ACPClient:new(config)
     local instance = {
         config = config or {},
         id_counter = 0,
-        session_id = 0,
         protocol_version = 1,
         capabilities = {
             fs = {
@@ -58,7 +55,6 @@ function ACPClient:new(config)
 
     client:_setup_transport()
     client:_connect()
-    client:_create_session()
     return client
 end
 
@@ -147,9 +143,11 @@ function ACPClient:_send_request(method, params, callback)
         params = params or {},
     }
 
-    if callback then
-        self.callbacks[id] = callback
+    if not callback then
+        return self:_wait_response_sync(id)
     end
+
+    self.callbacks[id] = callback
 
     local data = vim.json.encode(message)
 
@@ -158,13 +156,9 @@ function ACPClient:_send_request(method, params, callback)
     if not self.transport:send(data) then
         return nil
     end
-
-    if not callback then
-        return self:_wait_response(id)
-    end
 end
 
-function ACPClient:_wait_response(id)
+function ACPClient:_wait_response_sync(id)
     local start_time = vim.uv.now()
     local timeout = self.config.timeout or 100000
 
@@ -181,7 +175,7 @@ function ACPClient:_wait_response(id)
     return nil,
         self:_create_error(
             self.ERROR_CODES.TIMEOUT_ERROR,
-            "Timeout waiting for response"
+            "Timeout waiting for a response from the agent"
         )
 end
 
@@ -241,8 +235,8 @@ function ACPClient:_handle_message(message)
 
         local callback = self.callbacks[message.id]
         if callback then
-            callback(message.result, message.error)
             self.callbacks[message.id] = nil
+            callback(message.result, message.error)
         else
             self.pending_responses[message.id] =
                 { message.result, message.error }
@@ -399,9 +393,7 @@ end
 
 function ACPClient:stop()
     self.transport:stop()
-
     self.pending_responses = {}
-    self.reconnect_count = 0
 end
 
 function ACPClient:initialize()
@@ -435,7 +427,7 @@ function ACPClient:initialize()
 
     if auth_method then
         logger.debug("Authenticating with method ", auth_method)
-        self:authenticate(auth_method)
+        self:_authenticate(auth_method)
         self:_set_state("ready")
     else
         logger.debug("No authentication method found or specified")
@@ -444,13 +436,13 @@ function ACPClient:initialize()
 end
 
 ---@param method_id string
-function ACPClient:authenticate(method_id)
+function ACPClient:_authenticate(method_id)
     return self:_send_request("authenticate", {
         methodId = method_id,
     })
 end
 
-function ACPClient:_create_session()
+function ACPClient:create_session()
     local cwd = vim.fn.getcwd()
 
     local result, err = self:_send_request("session/new", {
@@ -521,49 +513,8 @@ function ACPClient:cancel_session(session_id)
 end
 
 ---@return boolean
-function ACPClient:is_ready()
-    return self.state == "ready"
-end
-
----@return boolean
 function ACPClient:is_connected()
     return self.state ~= "disconnected" and self.state ~= "error"
-end
-
----@param callback function
----@param timeout number? Timeout in milliseconds
-function ACPClient:wait_ready(callback, timeout)
-    if self:is_ready() then
-        callback(nil)
-        return
-    end
-
-    local timeout_ms = timeout or 10000
-    local start_time = uv.now()
-
-    local function check_ready()
-        if self:is_ready() then
-            callback(nil)
-        elseif self.state == "error" then
-            callback(
-                self:_create_error(
-                    self.ERROR_CODES.PROTOCOL_ERROR,
-                    "Client entered error state while waiting"
-                )
-            )
-        elseif uv.now() - start_time > timeout_ms then
-            callback(
-                self:_create_error(
-                    self.ERROR_CODES.TIMEOUT_ERROR,
-                    "Timeout waiting for client to be ready"
-                )
-            )
-        else
-            vim.defer_fn(check_ready, 100)
-        end
-    end
-
-    check_ready()
 end
 
 return ACPClient

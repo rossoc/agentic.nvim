@@ -58,7 +58,7 @@ function ChatWidget:is_open()
     return vim.api.nvim_win_is_valid(win_id)
 end
 
-function ChatWidget:open()
+function ChatWidget:show()
     if not self:is_open() then
         self.panels.layout:show()
     end
@@ -74,7 +74,7 @@ function ChatWidget:toggle()
     if self:is_open() then
         self:hide()
     else
-        self:open()
+        self:show()
     end
 end
 

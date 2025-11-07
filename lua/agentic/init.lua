@@ -1,23 +1,5 @@
 local Config = require("agentic.config")
-
---- A list of instances indexed by tab page ID
---- We are limited by one Agent instance per tab
----@type table<integer, agentic.state.Instance>
-local instances = {}
-
----Cleanup all active instances and processes
----This is called automatically on VimLeavePre and signal handlers
----Can also be called manually if needed
-local function cleanup_all()
-    for _tab_id, instance in pairs(instances) do
-        if instance.agent_client then
-            pcall(function()
-                instance.agent_client:stop()
-            end)
-        end
-    end
-    instances = {}
-end
+local AgentInstance = require("agentic.acp.agent_instance")
 
 ---@class agentic.Agentic
 local Agentic = {}
@@ -35,19 +17,61 @@ local function deep_merge_into(target, ...)
     return target
 end
 
+---@type table<integer, agentic.ui.ChatWidget>
+local chat_widgets_by_tab = {}
+
+local function get_chat_widget_for_tab_page()
+    local tab_page_id = vim.api.nvim_get_current_tabpage()
+    local instance = chat_widgets_by_tab[tab_page_id]
+
+    if not instance then
+        instance = require("agentic.ui.chat_widget"):new(tab_page_id)
+        chat_widgets_by_tab[tab_page_id] = instance
+    end
+
+    return instance
+end
+
+--- Opens the chat widget for the current tab page
+--- Safe to call multiple times
+function Agentic.open()
+    get_chat_widget_for_tab_page():show()
+end
+
+--- Closes the chat widget for the current tab page
+--- Safe to call multiple times
+function Agentic.close()
+    get_chat_widget_for_tab_page():hide()
+end
+
+--- Toggles the chat widget for the current tab page
+--- Safe to call multiple times
+function Agentic.toggle()
+    get_chat_widget_for_tab_page():toggle()
+end
+
+local traps_set = false
+local cleanup_group = vim.api.nvim_create_augroup("AgenticCleanup", {
+    clear = true,
+})
+
+--- Merges the current user configuration with the default configuration
+--- This method should be safe to be called multiple times
 ---@param opts agentic.UserConfig
 function Agentic.setup(opts)
     deep_merge_into(Config, opts or {})
     ---FIXIT: remove the debug override before release
     Config.debug = true
 
-    local cleanup_group =
-        vim.api.nvim_create_augroup("AgenticCleanup", { clear = true })
+    if traps_set then
+        return
+    end
 
+    traps_set = true
     vim.api.nvim_create_autocmd("VimLeavePre", {
         group = cleanup_group,
         callback = function()
-            cleanup_all()
+            AgentInstance:cleanup_all()
         end,
         desc = "Cleanup Agentic processes on exit",
     })
@@ -71,39 +95,15 @@ function Agentic.setup(opts)
 
     -- Setup signal handlers for graceful shutdown
     local sigterm_handler = vim.uv.new_signal()
-    vim.uv.signal_start(sigterm_handler, "sigterm", function(signame)
-        cleanup_all()
+    vim.uv.signal_start(sigterm_handler, "sigterm", function(_sigName)
+        AgentInstance:cleanup_all()
     end)
 
     -- SIGINT handler (Ctrl-C) - note: may not trigger in raw terminal mode
     local sigint_handler = vim.uv.new_signal()
-    vim.uv.signal_start(sigint_handler, "sigint", function(signame)
-        cleanup_all()
+    vim.uv.signal_start(sigint_handler, "sigint", function(_sigName)
+        AgentInstance:cleanup_all()
     end)
-end
-
-local function get_instance()
-    local tab_page_id = vim.api.nvim_get_current_tabpage()
-    local instance = instances[tab_page_id]
-
-    if not instance then
-        instance = require("agentic.agent_instance").make_instance(tab_page_id)
-        instances[tab_page_id] = instance
-    end
-
-    return instance
-end
-
-function Agentic.open()
-    get_instance().chat_widget:open()
-end
-
-function Agentic.close()
-    get_instance().chat_widget:hide()
-end
-
-function Agentic.toggle()
-    get_instance().chat_widget:toggle()
 end
 
 return Agentic
