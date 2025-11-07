@@ -25,7 +25,8 @@ local function get_chat_widget_for_tab_page()
     local instance = chat_widgets_by_tab[tab_page_id]
 
     if not instance then
-        instance = require("agentic.ui.chat_widget"):new(tab_page_id)
+        local agent = AgentInstance.get_instance("default")
+        instance = require("agentic.ui.chat_widget"):new(tab_page_id, agent)
         chat_widgets_by_tab[tab_page_id] = instance
     end
 
@@ -81,13 +82,13 @@ function Agentic.setup(opts)
         group = cleanup_group,
         callback = function(ev)
             local tab_id = tonumber(ev.match)
-            if tab_id and instances[tab_id] then
-                if instances[tab_id].agent_client then
+            if tab_id and chat_widgets_by_tab[tab_id] then
+                if chat_widgets_by_tab[tab_id] then
                     pcall(function()
-                        instances[tab_id].agent_client:stop()
+                        chat_widgets_by_tab[tab_id]:destroy()
                     end)
                 end
-                instances[tab_id] = nil
+                chat_widgets_by_tab[tab_id] = nil
             end
         end,
         desc = "Cleanup Agentic processes on tab close",

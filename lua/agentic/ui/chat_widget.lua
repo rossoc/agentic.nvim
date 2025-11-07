@@ -29,12 +29,17 @@ local event = require("nui.utils.autocmd").event
 ---@field win_ids agentic.ui.ChatWidgetWinIds
 ---@field panels agentic.ui.ChatWidgetPanels
 ---@field is_generating boolean
+---@field client agentic.acp.ACPClient
+---@field session_id string
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
 
 ---@param tab_page_id integer
-function ChatWidget:new(tab_page_id)
+---@param client agentic.acp.ACPClient
+function ChatWidget:new(tab_page_id, client)
     local instance = setmetatable({}, ChatWidget)
+    instance.client = client
+
     instance.tab_page_id = tab_page_id
     instance.main_buffer = {
         bufnr = 0,
@@ -42,6 +47,14 @@ function ChatWidget:new(tab_page_id)
         selection = nil,
     }
     instance.panels = {}
+
+    client:create_session(function(response, err)
+        if err or not response then
+            return
+        end
+
+        instance.session_id = response.sessionId
+    end)
 
     instance:_initialize()
 
@@ -76,6 +89,10 @@ function ChatWidget:toggle()
     else
         self:show()
     end
+end
+
+function ChatWidget:destroy()
+    self.panels.layout:unmount()
 end
 
 function ChatWidget:_initialize()

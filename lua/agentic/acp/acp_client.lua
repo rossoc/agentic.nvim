@@ -143,8 +143,9 @@ function ACPClient:_send_request(method, params, callback)
         params = params or {},
     }
 
-    if not callback then
-        return self:_wait_response_sync(id)
+    -- store the callback first to avoid freezing and race conditions
+    if callback then
+        self.callbacks[id] = callback
     end
 
     self.callbacks[id] = callback
@@ -155,6 +156,11 @@ function ACPClient:_send_request(method, params, callback)
 
     if not self.transport:send(data) then
         return nil
+    end
+
+    if not callback then
+        logger.debug("Waiting for synchronous request:", method)
+        return self:_wait_response_sync(id)
     end
 end
 
@@ -388,7 +394,7 @@ function ACPClient:_connect()
 
     self.transport:start()
 
-    self:initialize()
+    self:_initialize()
 end
 
 function ACPClient:stop()
@@ -396,7 +402,7 @@ function ACPClient:stop()
     self.pending_responses = {}
 end
 
-function ACPClient:initialize()
+function ACPClient:_initialize()
     if self.state ~= "connected" then
         local error = self:_create_error(
             self.ERROR_CODES.PROTOCOL_ERROR,
@@ -442,31 +448,49 @@ function ACPClient:_authenticate(method_id)
     })
 end
 
-function ACPClient:create_session()
+---@param callback? fun(result: table|nil, err: agentic.acp.ACPError|nil)
+---@return string|nil session_id
+---@return agentic.acp.ACPError|nil err
+function ACPClient:create_session(callback)
     local cwd = vim.fn.getcwd()
+
+    -- handler to threat both sync and async cases in the same way
+    local function handle_response_sync(result, err)
+        callback = callback or function() end
+        if err then
+            vim.notify(
+                "Failed to create session: " .. err.message,
+                vim.log.levels.ERROR
+            )
+            callback(nil, err)
+            return nil, err
+        end
+
+        if not result then
+            err = self:_create_error(
+                self.ERROR_CODES.PROTOCOL_ERROR,
+                "Failed to create session: missing result"
+            )
+
+            callback(nil, err)
+            return nil, err
+        end
+
+        callback(result, err)
+        return result.sessionId, nil
+    end
 
     local result, err = self:_send_request("session/new", {
         cwd = cwd,
         mcpServers = {},
-    })
+    }, callback and handle_response_sync or nil)
 
-    if err then
-        vim.notify(
-            "Failed to create session: " .. err.message,
-            vim.log.levels.ERROR
-        )
-        return nil, err
+    -- when there's a callback, it'll resolve asynchronously
+    if callback then
+        return
     end
 
-    if not result then
-        err = self:_create_error(
-            self.ERROR_CODES.PROTOCOL_ERROR,
-            "Failed to create session: missing result"
-        )
-        return nil, err
-    end
-
-    self.session_id = result.sessionId
+    return handle_response_sync(result, err)
 end
 
 ---@param session_id string
