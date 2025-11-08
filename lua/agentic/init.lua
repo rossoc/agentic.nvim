@@ -25,7 +25,7 @@ local function get_chat_widget_for_tab_page()
     local instance = chat_widgets_by_tab[tab_page_id]
 
     if not instance then
-        local agent = AgentInstance.get_instance("default")
+        local agent = AgentInstance.get_instance(Config.provider)
         instance = require("agentic.ui.chat_widget"):new(tab_page_id, agent)
         chat_widgets_by_tab[tab_page_id] = instance
     end

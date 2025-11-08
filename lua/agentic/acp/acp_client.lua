@@ -4,7 +4,7 @@ local transport_module = require("agentic.acp.acp_transport")
 ---FIXIT: try to delete convenience methods down below to not keep unused code
 
 ---@class agentic.acp.ACPClient
----@field config agentic.acp.ClientConfig
+---@field provider_config agentic.acp.ClientConfig
 ---@field id_counter number
 ---@field state agentic.acp.ClientConnectionState
 ---@field protocol_version number
@@ -12,9 +12,10 @@ local transport_module = require("agentic.acp.acp_transport")
 ---@field agent_capabilities? agentic.acp.AgentCapabilities
 ---@field callbacks table<number, fun(result?: table, err?: agentic.acp.ACPError)>
 ---@field transport? agentic.acp.ACPTransportInstance
+---@field handlers? agentic.acp.ClientHandlers
 local ACPClient = {}
 
--- ACP Error codes
+--- ACP Error codes
 ACPClient.ERROR_CODES = {
     TRANSPORT_ERROR = -32000,
     PROTOCOL_ERROR = -32001,
@@ -26,11 +27,13 @@ ACPClient.ERROR_CODES = {
 }
 
 ---@param config? agentic.acp.ClientConfig
+---@param handlers? agentic.acp.ClientHandlers
 ---@return agentic.acp.ACPClient
-function ACPClient:new(config)
+function ACPClient:new(config, handlers)
     ---@type agentic.acp.ACPClient
     local instance = {
-        config = config or {},
+        provider_config = config or {},
+        handlers = handlers or {},
         id_counter = 0,
         protocol_version = 1,
         capabilities = {
@@ -59,16 +62,16 @@ function ACPClient:new(config)
 end
 
 function ACPClient:_setup_transport()
-    local transport_type = self.config.transport_type or "stdio"
+    local transport_type = self.provider_config.transport_type or "stdio"
 
     if transport_type == "stdio" then
         ---@type agentic.acp.StdioTransportConfig
         local transport_config = {
-            command = self.config.command or "claude-code-acp",
-            args = self.config.args,
-            env = self.config.env,
-            enable_reconnect = self.config.reconnect,
-            max_reconnect_attempts = self.config.max_reconnect_attempts,
+            command = self.provider_config.command,
+            args = self.provider_config.args,
+            env = self.provider_config.env,
+            enable_reconnect = self.provider_config.reconnect,
+            max_reconnect_attempts = self.provider_config.max_reconnect_attempts,
         }
 
         ---@type agentic.acp.TransportCallbacks
@@ -102,12 +105,7 @@ end
 ---Set connection state
 ---@param state agentic.acp.ClientConnectionState
 function ACPClient:_set_state(state)
-    local old_state = self.state
     self.state = state
-
-    if self.config.on_state_change then
-        self.config.on_state_change(state, old_state)
-    end
 end
 
 ---Create error object
@@ -166,7 +164,7 @@ end
 
 function ACPClient:_wait_response_sync(id)
     local start_time = vim.uv.now()
-    local timeout = self.config.timeout or 100000
+    local timeout = self.provider_config.timeout or 100000
 
     while vim.uv.now() - start_time < timeout do
         vim.wait(10)
@@ -232,13 +230,13 @@ end
 ---Handle received message
 ---@param message table
 function ACPClient:_handle_message(message)
+    logger.debug_to_file("response: ", vim.inspect(message))
+
     -- Check if this is a notification (has method but no id, or has both method and id for notifications)
     if message.method and not message.result and not message.error then
         -- This is a notification
         self:_handle_notification(message.id, message.method, message.params)
     elseif message.id and (message.result or message.error) then
-        logger.debug_to_file("response: ", vim.inspect(message))
-
         local callback = self.callbacks[message.id]
         if callback then
             self.callbacks[message.id] = nil
@@ -300,9 +298,9 @@ function ACPClient:_handle_session_update(params)
         return
     end
 
-    if self.config.handlers and self.config.handlers.on_session_update then
+    if self.handlers and self.handlers.on_session_update then
         vim.schedule(function()
-            self.config.handlers.on_session_update(update)
+            self.handlers.on_session_update(update)
         end)
     end
 end
@@ -315,22 +313,19 @@ function ACPClient:_handle_request_permission(message_id, request)
         return
     end
 
-    if self.config.handlers and self.config.handlers.on_request_permission then
+    if self.handlers and self.handlers.on_request_permission then
         vim.schedule(function()
-            self.config.handlers.on_request_permission(
-                request,
-                function(option_id)
-                    self:_send_result(
-                        message_id,
-                        { --- @type agentic.acp.RequestPermissionOutcome
-                            outcome = {
-                                outcome = "selected",
-                                optionId = option_id,
-                            },
-                        }
-                    )
-                end
-            )
+            self.handlers.on_request_permission(request, function(option_id)
+                self:_send_result(
+                    message_id,
+                    { --- @type agentic.acp.RequestPermissionOutcome
+                        outcome = {
+                            outcome = "selected",
+                            optionId = option_id,
+                        },
+                    }
+                )
+            end)
         end)
     end
 end
@@ -349,9 +344,9 @@ function ACPClient:_handle_read_text_file(message_id, params)
         return
     end
 
-    if self.config.handlers and self.config.handlers.on_read_file then
+    if self.handlers and self.handlers.on_read_file then
         vim.schedule(function()
-            self.config.handlers.on_read_file(
+            self.handlers.on_read_file(
                 path,
                 params.line ~= vim.NIL and params.line or nil,
                 params.limit ~= vim.NIL and params.limit or nil,
@@ -378,9 +373,9 @@ function ACPClient:_handle_write_text_file(message_id, params)
         return
     end
 
-    if self.config.handlers and self.config.handlers.on_write_file then
+    if self.handlers and self.handlers.on_write_file then
         vim.schedule(function()
-            self.config.handlers.on_write_file(path, content, function(error)
+            self.handlers.on_write_file(path, content, function(error)
                 self:_send_result(message_id, error == nil and vim.NIL or error)
             end)
         end)
@@ -429,7 +424,7 @@ function ACPClient:_initialize()
     self.auth_methods = result.authMethods or {}
 
     -- Check if we need to authenticate
-    local auth_method = self.config.auth_method
+    local auth_method = self.provider_config.auth_method
 
     if auth_method then
         logger.debug("Authenticating with method ", auth_method)
@@ -518,7 +513,7 @@ function ACPClient:load_session(session_id, cwd, mcp_servers)
 end
 
 ---@param session_id string
----@param prompt table[]
+---@param prompt agentic.acp.Content[]
 ---@param callback? fun(result: table|nil, err: agentic.acp.ACPError|nil)
 function ACPClient:send_prompt(session_id, prompt, callback)
     local params = {
@@ -589,26 +584,25 @@ return ACPClient
 
 ---@alias agentic.acp.PlanEntryPriority "high" | "medium" | "low"
 
----@class agentic.acp.BaseContent
----@field type "text" | "image" | "audio" | "resource_link" | "resource"
----@field annotations? agentic.acp.Annotations
-
----@class agentic.acp.TextContent : agentic.acp.BaseContent
+---@class agentic.acp.TextContent
 ---@field type "text"
 ---@field text string
+---@field annotations? agentic.acp.Annotations
 
----@class agentic.acp.ImageContent : agentic.acp.BaseContent
+---@class agentic.acp.ImageContent
 ---@field type "image"
 ---@field data string
 ---@field mimeType string
 ---@field uri? string
+---@field annotations? agentic.acp.Annotations
 
----@class agentic.acp.AudioContent : agentic.acp.BaseContent
+---@class agentic.acp.AudioContent
 ---@field type "audio"
 ---@field data string
 ---@field mimeType string
+---@field annotations? agentic.acp.Annotations
 
----@class agentic.acp.ResourceLinkContent : agentic.acp.BaseContent
+---@class agentic.acp.ResourceLinkContent
 ---@field type "resource_link"
 ---@field uri string
 ---@field name string
@@ -616,10 +610,12 @@ return ACPClient
 ---@field mimeType? string
 ---@field size? number
 ---@field title? string
+---@field annotations? agentic.acp.Annotations
 
----@class agentic.acp.ResourceContent : agentic.acp.BaseContent
+---@class agentic.acp.ResourceContent
 ---@field type "resource"
 ---@field resource agentic.acp.EmbeddedResource
+---@field annotations? agentic.acp.Annotations
 
 ---@class agentic.acp.EmbeddedResource
 ---@field uri string
@@ -632,7 +628,12 @@ return ACPClient
 ---@field lastModified? string
 ---@field priority? number
 
----@alias agentic.acp.Content agentic.acp.TextContent | agentic.acp.ImageContent | agentic.acp.AudioContent | agentic.acp.ResourceLinkContent | agentic.acp.ResourceContent
+---@alias agentic.acp.Content
+--- | agentic.acp.TextContent
+--- | agentic.acp.ImageContent
+--- | agentic.acp.AudioContent
+--- | agentic.acp.ResourceLinkContent
+--- | agentic.acp.ResourceContent
 
 ---@class agentic.acp.RawInput
 ---@field file_path string
@@ -681,18 +682,15 @@ return ACPClient
 ---@field description string
 ---@field input? table<string, any>
 
----@class agentic.acp.BaseSessionUpdate
----@field sessionUpdate "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk" | "tool_call" | "tool_call_update" | "plan" | "available_commands_update"
-
----@class agentic.acp.UserMessageChunk : agentic.acp.BaseSessionUpdate
+---@class agentic.acp.UserMessageChunk
 ---@field sessionUpdate "user_message_chunk"
 ---@field content agentic.acp.Content
 
----@class agentic.acp.AgentMessageChunk : agentic.acp.BaseSessionUpdate
+---@class agentic.acp.AgentMessageChunk
 ---@field sessionUpdate "agent_message_chunk"
 ---@field content agentic.acp.Content
 
----@class agentic.acp.AgentThoughtChunk : agentic.acp.BaseSessionUpdate
+---@class agentic.acp.AgentThoughtChunk
 ---@field sessionUpdate "agent_thought_chunk"
 ---@field content agentic.acp.Content
 
@@ -707,13 +705,21 @@ return ACPClient
 ---@field rawInput? agentic.acp.RawInput
 ---@field rawOutput? table
 
----@class agentic.acp.PlanUpdate : agentic.acp.BaseSessionUpdate
+---@class agentic.acp.PlanUpdate
 ---@field sessionUpdate "plan"
 ---@field entries agentic.acp.PlanEntry[]
 
----@class agentic.acp.AvailableCommandsUpdate : agentic.acp.BaseSessionUpdate
+---@class agentic.acp.AvailableCommandsUpdate
 ---@field sessionUpdate "available_commands_update"
 ---@field availableCommands agentic.acp.AvailableCommand[]
+
+---@alias agentic.acp.SessionUpdateMessage
+--- | agentic.acp.UserMessageChunk
+--- | agentic.acp.AgentMessageChunk
+--- | agentic.acp.AgentThoughtChunk
+--- | agentic.acp.ToolCallUpdate
+--- | agentic.acp.PlanUpdate
+--- | agentic.acp.AvailableCommandsUpdate
 
 ---@class agentic.acp.PermissionOption
 ---@field optionId string
@@ -737,7 +743,7 @@ return ACPClient
 ---@field data? any
 
 ---@class agentic.acp.ClientHandlers
----@field on_session_update? fun(update: agentic.acp.UserMessageChunk | agentic.acp.AgentMessageChunk | agentic.acp.AgentThoughtChunk | agentic.acp.ToolCallUpdate | agentic.acp.PlanUpdate | agentic.acp.AvailableCommandsUpdate)
+---@field on_session_update? fun(update:  agentic.acp.SessionUpdateMessage): nil
 ---@field on_request_permission? fun(request: agentic.acp.RequestPermission, callback: fun(option_id: string | nil)): nil
 ---@field on_read_file? fun(path: string, line: integer | nil, limit: integer | nil, callback: fun(content: string|nil)): nil
 ---@field on_write_file? fun(path: string, content: string, callback: fun(error: string|nil)): nil
@@ -752,5 +758,3 @@ return ACPClient
 ---@field reconnect? boolean Enable auto-reconnect
 ---@field max_reconnect_attempts? number Maximum reconnection attempts
 ---@field auth_method? string Authentication method
----@field handlers? agentic.acp.ClientHandlers
----@field on_state_change? fun(new_state: agentic.acp.ClientConnectionState, old_state: agentic.acp.ClientConnectionState)

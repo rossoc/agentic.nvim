@@ -19,6 +19,34 @@ local ConfigDefault = {
                 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY"),
             },
         },
+
+        ["gemini-acp"] = {
+            command = "gemini",
+            args = { "--experimental-acp" },
+            env = {
+                NODE_NO_WARNINGS = "1",
+                IS_AI_TERMINAL = "1",
+            },
+        },
+
+        ["codex-acp"] = {
+            -- https://github.com/zed-industries/codex-acp/releases
+            -- xattr -dr com.apple.quarantine ~/.local/bin/codex-acp
+            command = "codex-acp",
+            args = {},
+            env = {
+                IS_AI_TERMINAL = "1",
+            },
+        },
+
+        ["opencode-acp"] = {
+            command = "opencode",
+            args = { "acp" },
+            env = {
+                NODE_NO_WARNINGS = "1",
+                IS_AI_TERMINAL = "1",
+            },
+        },
     },
 
     windows = {

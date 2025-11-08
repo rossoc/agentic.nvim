@@ -95,6 +95,32 @@ function ChatWidget:destroy()
     self.panels.layout:unmount()
 end
 
+function ChatWidget:_submit_input()
+    local lines =
+        vim.api.nvim_buf_get_lines(self.panels.input.bufnr, 0, -1, false)
+
+    local prompt = table.concat(lines, "\n"):match("^%s*(.-)%s*$")
+
+    if prompt == "" then
+        return
+    end
+
+    vim.api.nvim_buf_set_lines(self.panels.input.bufnr, 0, -1, false, {})
+    vim.api.nvim_win_set_cursor(self.panels.input.winid, { 1, 0 })
+
+    self.client:send_prompt(self.session_id, {
+        {
+            type = "text",
+            text = prompt,
+        },
+    }, function(_response, err)
+        if err then
+            vim.notify("Error submitting prompt: " .. vim.inspect(err))
+            return
+        end
+    end)
+end
+
 function ChatWidget:_initialize()
     self.main_buffer.winid = vim.api.nvim_get_current_win()
     self.main_buffer.bufnr = vim.api.nvim_get_current_buf()
@@ -121,6 +147,16 @@ function ChatWidget:_initialize()
     self.panels.input:on(event.BufEnter, function()
         self.panels.input:off(event.BufEnter)
         vim.cmd("startinsert!")
+    end)
+
+    self.panels.input:map("n", "<C-s>", function()
+        self:_submit_input()
+    end)
+    self.panels.input:map("i", "<C-s>", function()
+        self:_submit_input()
+    end)
+    self.panels.input:map("n", "q", function()
+        self:hide()
     end)
 
     self.panels.layout = Layout(

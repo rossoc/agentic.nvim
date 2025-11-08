@@ -5,6 +5,7 @@
 -- Documentation for reference: https://agentclientprotocol.com/protocol/session-setup.md
 
 local Logger = require("agentic.utils.logger")
+local Config = require("agentic.config")
 
 ---@class agentic.acp.AgentInstance
 ---@field chat_widget agentic.ui.ChatWidget
@@ -54,78 +55,88 @@ function AgentInstance.get_instance(provider_name)
         return AgentInstance.instances[provider_name]
     end
 
-    local agent_client = Client:new({
-        handlers = {
-            on_error = function(err)
-                Logger.debug("Agent error: ", err)
+    local provider_config = Config.acp_providers[provider_name]
+
+    local agent_client = Client:new(provider_config, {
+        on_error = function(err)
+            Logger.debug("Agent error: ", err)
+            vim.notify(
+                "Agent error: " .. err,
+                vim.log.levels.ERROR,
+                { title = "🐞 Agent Error" }
+            )
+        end,
+
+        on_read_file = function(abs_path, line, limit, callback)
+            local lines, err = read_file_from_buf_or_disk(abs_path)
+            lines = lines or {}
+
+            if err ~= nil then
                 vim.notify(
-                    "Agent error: " .. err,
+                    "Agent file read error: " .. err,
                     vim.log.levels.ERROR,
-                    { title = "🐞 Agent Error" }
+                    { title = " Read file error" }
                 )
-            end,
+                callback(nil)
+                return
+            end
 
-            on_read_file = function(abs_path, line, limit, callback)
-                local lines, err = read_file_from_buf_or_disk(abs_path)
-                lines = lines or {}
+            if line ~= nil and limit ~= nil then
+                lines = vim.list_slice(lines, line, line + limit)
+            end
 
-                if err ~= nil then
-                    vim.notify(
-                        "Agent file read error: " .. err,
-                        vim.log.levels.ERROR,
-                        { title = " Read file error" }
-                    )
-                    callback(nil)
-                    return
+            local content = table.concat(lines, "\n")
+            callback(content)
+        end,
+
+        on_write_file = function(abs_path, content, callback)
+            local file = io.open(abs_path, "w")
+            if file then
+                file:write(content)
+                file:close()
+
+                local buffers = vim.tbl_filter(function(bufnr)
+                    return vim.api.nvim_buf_is_valid(bufnr)
+                        and vim.fn.fnamemodify(
+                                vim.api.nvim_buf_get_name(bufnr),
+                                ":p"
+                            )
+                            == abs_path
+                end, vim.api.nvim_list_bufs())
+
+                local bufnr = next(buffers)
+
+                if bufnr then
+                    vim.api.nvim_buf_call(bufnr, function()
+                        local view = vim.fn.winsaveview()
+                        vim.cmd("checktime")
+                        vim.fn.winrestview(view)
+                    end)
                 end
 
-                if line ~= nil and limit ~= nil then
-                    lines = vim.list_slice(lines, line, line + limit)
-                end
+                callback(nil)
+                return
+            end
+            callback("Failed to write file: " .. abs_path)
+        end,
 
-                local content = table.concat(lines, "\n")
-                callback(content)
-            end,
+        on_session_update = function(update)
+            --
+            -- {
+            --      sessionUpdate = "agent_message_chunk"
+            --      content = {
+            --          text = "Hi! 👋 I'm ready to help you with your software engineering tasks. What would you like to work on today?",
+            --          type = "text"
+            --      },
+            -- }
 
-            on_write_file = function(abs_path, content, callback)
-                local file = io.open(abs_path, "w")
-                if file then
-                    file:write(content)
-                    file:close()
+            -- FIXIT: here isn't the best place for updating the chat panel, how to decouple?
+            -- maybe it's time to introduce the session manager and a message writter
+        end,
 
-                    local buffers = vim.tbl_filter(function(bufnr)
-                        return vim.api.nvim_buf_is_valid(bufnr)
-                            and vim.fn.fnamemodify(
-                                    vim.api.nvim_buf_get_name(bufnr),
-                                    ":p"
-                                )
-                                == abs_path
-                    end, vim.api.nvim_list_bufs())
-
-                    local bufnr = next(buffers)
-
-                    if bufnr then
-                        vim.api.nvim_buf_call(bufnr, function()
-                            local view = vim.fn.winsaveview()
-                            vim.cmd("checktime")
-                            vim.fn.winrestview(view)
-                        end)
-                    end
-
-                    callback(nil)
-                    return
-                end
-                callback("Failed to write file: " .. abs_path)
-            end,
-
-            on_session_update = function(update)
-                -- Handle state changes of the agent connection
-            end,
-
-            on_request_permission = function(request)
-                -- Handle permission requests from the agent
-            end,
-        },
+        on_request_permission = function(request)
+            -- Handle permission requests from the agent
+        end,
     })
 
     AgentInstance.instances[provider_name] = agent_client
