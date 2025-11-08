@@ -23,23 +23,20 @@ local event = require("nui.utils.autocmd").event
 ---@field selection? table
 
 ---@class agentic.ui.ChatWidget
----@field was_mounted boolean
 ---@field tab_page_id integer
 ---@field main_buffer agentic.ui.ChatWidgetMainBuffer The buffer where the chat widget was opened from and will display the active file
----@field win_ids agentic.ui.ChatWidgetWinIds
 ---@field panels agentic.ui.ChatWidgetPanels
 ---@field is_generating boolean
----@field client agentic.acp.ACPClient
----@field session_id string
+---@field on_submit_input fun(prompt: string) external callback to be called when user submits the input
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
 
 ---@param tab_page_id integer
----@param client agentic.acp.ACPClient
-function ChatWidget:new(tab_page_id, client)
+---@param on_submit_input fun(prompt: string)
+function ChatWidget:new(tab_page_id, on_submit_input)
     local instance = setmetatable({}, ChatWidget)
-    instance.client = client
 
+    instance.on_submit_input = on_submit_input
     instance.tab_page_id = tab_page_id
     instance.main_buffer = {
         bufnr = 0,
@@ -47,14 +44,6 @@ function ChatWidget:new(tab_page_id, client)
         selection = nil,
     }
     instance.panels = {}
-
-    client:create_session(function(response, err)
-        if err or not response then
-            return
-        end
-
-        instance.session_id = response.sessionId
-    end)
 
     instance:_initialize()
 
@@ -108,17 +97,7 @@ function ChatWidget:_submit_input()
     vim.api.nvim_buf_set_lines(self.panels.input.bufnr, 0, -1, false, {})
     vim.api.nvim_win_set_cursor(self.panels.input.winid, { 1, 0 })
 
-    self.client:send_prompt(self.session_id, {
-        {
-            type = "text",
-            text = prompt,
-        },
-    }, function(_response, err)
-        if err then
-            vim.notify("Error submitting prompt: " .. vim.inspect(err))
-            return
-        end
-    end)
+    self.on_submit_input(prompt)
 end
 
 function ChatWidget:_initialize()

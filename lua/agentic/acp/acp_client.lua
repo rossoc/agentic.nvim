@@ -3,6 +3,8 @@ local transport_module = require("agentic.acp.acp_transport")
 
 ---FIXIT: try to delete convenience methods down below to not keep unused code
 
+--- TODO: This should inherit from a base Client interface to allow for other protocols
+---
 ---@class agentic.acp.ACPClient
 ---@field provider_config agentic.acp.ClientConfig
 ---@field id_counter number
@@ -26,14 +28,14 @@ ACPClient.ERROR_CODES = {
     INVALID_REQUEST = -32006,
 }
 
----@param config? agentic.acp.ClientConfig
----@param handlers? agentic.acp.ClientHandlers
+---@param config agentic.acp.ClientConfig
+---@param handlers agentic.acp.ClientHandlers
 ---@return agentic.acp.ACPClient
 function ACPClient:new(config, handlers)
     ---@type agentic.acp.ACPClient
     local instance = {
-        provider_config = config or {},
-        handlers = handlers or {},
+        provider_config = config,
+        handlers = handlers,
         id_counter = 0,
         protocol_version = 1,
         capabilities = {
@@ -150,7 +152,7 @@ function ACPClient:_send_request(method, params, callback)
 
     local data = vim.json.encode(message)
 
-    logger.debug_to_file("request: ", vim.inspect(message))
+    logger.debug_to_file("request: ", message)
 
     if not self.transport:send(data) then
         return nil
@@ -162,12 +164,13 @@ function ACPClient:_send_request(method, params, callback)
     end
 end
 
+---@deprecated remove the sync wait to avoid UI freezing, all requests should have a callback, even if it's a noop
 function ACPClient:_wait_response_sync(id)
     local start_time = vim.uv.now()
     local timeout = self.provider_config.timeout or 100000
 
     while vim.uv.now() - start_time < timeout do
-        vim.wait(10)
+        vim.wait(100)
 
         if self.pending_responses[id] then
             local result, err = unpack(self.pending_responses[id])
@@ -195,7 +198,7 @@ function ACPClient:_send_notification(method, params)
 
     local data = vim.json.encode(message)
 
-    logger.debug_to_file("notification: ", vim.inspect(message), "\n\n")
+    logger.debug_to_file("notification: ", message, "\n\n")
 
     self.transport:send(data)
 end
@@ -208,7 +211,7 @@ function ACPClient:_send_result(id, result)
     local message = { jsonrpc = "2.0", id = id, result = result }
 
     local data = vim.json.encode(message)
-    logger.debug_to_file("request:", vim.inspect(message))
+    logger.debug_to_file("request:", message)
 
     self.transport:send(data)
 end
@@ -227,10 +230,10 @@ function ACPClient:_send_error(id, message, code)
     self.transport:send(data)
 end
 
----Handle received message
+---Handles raw JSON-RPC message received from the transport
 ---@param message table
 function ACPClient:_handle_message(message)
-    logger.debug_to_file("response: ", vim.inspect(message))
+    logger.debug_to_file("response: ", message)
 
     -- Check if this is a notification (has method but no id, or has both method and id for notifications)
     if message.method and not message.result and not message.error then
@@ -254,12 +257,9 @@ function ACPClient:_handle_message(message)
     end
 end
 
----Handle notification
 ---@param method string
 ---@param params table
 function ACPClient:_handle_notification(message_id, method, params)
-    logger.debug_to_file("method:", method, vim.inspect(params))
-
     if method == "session/update" then
         self:_handle_session_update(params)
     elseif method == "session/request_permission" then
@@ -298,11 +298,9 @@ function ACPClient:_handle_session_update(params)
         return
     end
 
-    if self.handlers and self.handlers.on_session_update then
-        vim.schedule(function()
-            self.handlers.on_session_update(update)
-        end)
-    end
+    vim.schedule(function()
+        self.handlers.on_session_update(update)
+    end)
 end
 
 ---@param message_id number
@@ -313,21 +311,19 @@ function ACPClient:_handle_request_permission(message_id, request)
         return
     end
 
-    if self.handlers and self.handlers.on_request_permission then
-        vim.schedule(function()
-            self.handlers.on_request_permission(request, function(option_id)
-                self:_send_result(
-                    message_id,
-                    { --- @type agentic.acp.RequestPermissionOutcome
-                        outcome = {
-                            outcome = "selected",
-                            optionId = option_id,
-                        },
-                    }
-                )
-            end)
+    vim.schedule(function()
+        self.handlers.on_request_permission(request, function(option_id)
+            self:_send_result(
+                message_id,
+                { --- @type agentic.acp.RequestPermissionOutcome
+                    outcome = {
+                        outcome = "selected",
+                        optionId = option_id,
+                    },
+                }
+            )
         end)
-    end
+    end)
 end
 
 ---@param message_id number
@@ -344,18 +340,16 @@ function ACPClient:_handle_read_text_file(message_id, params)
         return
     end
 
-    if self.handlers and self.handlers.on_read_file then
-        vim.schedule(function()
-            self.handlers.on_read_file(
-                path,
-                params.line ~= vim.NIL and params.line or nil,
-                params.limit ~= vim.NIL and params.limit or nil,
-                function(content)
-                    self:_send_result(message_id, { content = content })
-                end
-            )
-        end)
-    end
+    vim.schedule(function()
+        self.handlers.on_read_file(
+            path,
+            params.line ~= vim.NIL and params.line or nil,
+            params.limit ~= vim.NIL and params.limit or nil,
+            function(content)
+                self:_send_result(message_id, { content = content })
+            end
+        )
+    end)
 end
 
 ---@param message_id number
@@ -373,13 +367,11 @@ function ACPClient:_handle_write_text_file(message_id, params)
         return
     end
 
-    if self.handlers and self.handlers.on_write_file then
-        vim.schedule(function()
-            self.handlers.on_write_file(path, content, function(error)
-                self:_send_result(message_id, error == nil and vim.NIL or error)
-            end)
+    vim.schedule(function()
+        self.handlers.on_write_file(path, content, function(error)
+            self:_send_result(message_id, error == nil and vim.NIL or error)
         end)
-    end
+    end)
 end
 
 function ACPClient:_connect()
@@ -742,12 +734,18 @@ return ACPClient
 ---@field message string
 ---@field data? any
 
+---@alias agentic.acp.ClientHandlers.on_session_update fun(update: agentic.acp.SessionUpdateMessage): nil
+---@alias agentic.acp.ClientHandlers.on_request_permission fun(request: agentic.acp.RequestPermission, callback: fun(option_id: string | nil)): nil
+---@alias agentic.acp.ClientHandlers.on_read_file fun(path: string, line: integer | nil, limit: integer | nil, callback: fun(content: string|nil)): nil
+---@alias agentic.acp.ClientHandlers.on_write_file fun(path: string, content: string, callback: fun(error: string|nil)): nil
+---@alias agentic.acp.ClientHandlers.on_error fun(err: agentic.acp.ACPError): nil
+
 ---@class agentic.acp.ClientHandlers
----@field on_session_update? fun(update:  agentic.acp.SessionUpdateMessage): nil
----@field on_request_permission? fun(request: agentic.acp.RequestPermission, callback: fun(option_id: string | nil)): nil
----@field on_read_file? fun(path: string, line: integer | nil, limit: integer | nil, callback: fun(content: string|nil)): nil
----@field on_write_file? fun(path: string, content: string, callback: fun(error: string|nil)): nil
----@field on_error? fun(error: table)
+---@field on_session_update agentic.acp.ClientHandlers.on_session_update
+---@field on_request_permission agentic.acp.ClientHandlers.on_request_permission
+---@field on_read_file agentic.acp.ClientHandlers.on_read_file
+---@field on_write_file agentic.acp.ClientHandlers.on_write_file
+---@field on_error agentic.acp.ClientHandlers.on_error
 
 ---@class agentic.acp.ClientConfig
 ---@field transport_type? agentic.acp.TransportType

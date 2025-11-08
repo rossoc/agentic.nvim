@@ -17,16 +17,15 @@ local function deep_merge_into(target, ...)
     return target
 end
 
----@type table<integer, agentic.ui.ChatWidget>
+---@type table<integer, agentic.SessionManager|nil>
 local chat_widgets_by_tab = {}
 
-local function get_chat_widget_for_tab_page()
+local function get_session_for_tab_page()
     local tab_page_id = vim.api.nvim_get_current_tabpage()
     local instance = chat_widgets_by_tab[tab_page_id]
 
     if not instance then
-        local agent = AgentInstance.get_instance(Config.provider)
-        instance = require("agentic.ui.chat_widget"):new(tab_page_id, agent)
+        instance = require("agentic.session_manager"):new(tab_page_id)
         chat_widgets_by_tab[tab_page_id] = instance
     end
 
@@ -36,19 +35,19 @@ end
 --- Opens the chat widget for the current tab page
 --- Safe to call multiple times
 function Agentic.open()
-    get_chat_widget_for_tab_page():show()
+    get_session_for_tab_page().widget:show()
 end
 
 --- Closes the chat widget for the current tab page
 --- Safe to call multiple times
 function Agentic.close()
-    get_chat_widget_for_tab_page():hide()
+    get_session_for_tab_page().widget:hide()
 end
 
 --- Toggles the chat widget for the current tab page
 --- Safe to call multiple times
 function Agentic.toggle()
-    get_chat_widget_for_tab_page():toggle()
+    get_session_for_tab_page().widget:toggle()
 end
 
 local traps_set = false
