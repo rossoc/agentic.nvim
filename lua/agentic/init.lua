@@ -84,7 +84,7 @@ function Agentic.setup(opts)
             if tab_id and chat_widgets_by_tab[tab_id] then
                 if chat_widgets_by_tab[tab_id] then
                     pcall(function()
-                        chat_widgets_by_tab[tab_id]:destroy()
+                        chat_widgets_by_tab[tab_id].widget:destroy()
                     end)
                 end
                 chat_widgets_by_tab[tab_id] = nil
@@ -95,15 +95,19 @@ function Agentic.setup(opts)
 
     -- Setup signal handlers for graceful shutdown
     local sigterm_handler = vim.uv.new_signal()
-    vim.uv.signal_start(sigterm_handler, "sigterm", function(_sigName)
-        AgentInstance:cleanup_all()
-    end)
+    if sigterm_handler then
+        vim.uv.signal_start(sigterm_handler, "sigterm", function(_sigName)
+            AgentInstance:cleanup_all()
+        end)
+    end
 
     -- SIGINT handler (Ctrl-C) - note: may not trigger in raw terminal mode
     local sigint_handler = vim.uv.new_signal()
-    vim.uv.signal_start(sigint_handler, "sigint", function(_sigName)
-        AgentInstance:cleanup_all()
-    end)
+    if sigint_handler then
+        vim.uv.signal_start(sigint_handler, "sigint", function(_sigName)
+            AgentInstance:cleanup_all()
+        end)
+    end
 end
 
 return Agentic

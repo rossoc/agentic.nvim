@@ -8,6 +8,7 @@ ignore = {
     "631", -- Line is too long.
     -- "211", -- Unused variable.
     "212", -- Unused argument, In the case of callback function, _arg_name is easier to understand than _, so this option is set to off.
+    "213", -- Unused loop variable.
     -- "411", -- Redefining a local variable.
     -- "412", -- Redefining an argument.
     -- "422", -- Shadowing an argument
