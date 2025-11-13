@@ -99,9 +99,6 @@ function MessageWriter:write_tool_call_block(update)
 
     vim.bo[self.bufnr].modifiable = true
 
-    -- Padding for virtual glyphs (3 chars: glyph + horizontal/vertical + space)
-    local GLYPH_PADDING = "   "
-
     local line_count = vim.api.nvim_buf_line_count(self.bufnr)
     local current_line = line_count + 1
 
@@ -109,7 +106,7 @@ function MessageWriter:write_tool_call_block(update)
     if header_text then
         local header_line = Line()
         if header_text ~= "" then
-            header_line:append(GLYPH_PADDING .. header_text, self.hl_group)
+            header_line:append(header_text, self.hl_group)
         end
 
         header_line:render(self.bufnr, -1, current_line)
@@ -118,9 +115,6 @@ function MessageWriter:write_tool_call_block(update)
     end
 
     local body_lines = {}
-    for i, line in ipairs(body_lines) do
-        body_lines[i] = GLYPH_PADDING .. line
-    end
 
     local body_start_line = nil
     local body_end_line = nil
@@ -136,7 +130,7 @@ function MessageWriter:write_tool_call_block(update)
     if footer_text ~= nil then
         local footer_line = Line()
         if footer_text ~= "" then
-            footer_line:append(GLYPH_PADDING .. footer_text, self.hl_group)
+            footer_line:append(footer_text, self.hl_group)
         end
         footer_line:render(self.bufnr, -1, current_line)
         footer_line_num = current_line

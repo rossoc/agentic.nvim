@@ -188,7 +188,11 @@ function P.on_session_update(session, update)
     else
         -- TODO: Move this to Logger when confidence is high
         vim.notify(
-            "Unknown session update type: " .. tostring(update.sessionUpdate),
+            "Unknown session update type: "
+                .. tostring(
+                    ---@diagnostic disable-next-line: undefined-field -- expected it to be unknown
+                    update.sessionUpdate
+                ),
             vim.log.levels.WARN,
             { title = "⚠️ Unknown session update" }
         )

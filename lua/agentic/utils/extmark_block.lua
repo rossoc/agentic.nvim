@@ -27,7 +27,7 @@ function ExtmarkBlock:add_header_glyph(bufnr, line_num, hl_group)
         virt_text = {
             { GLYPHS.TOP_LEFT .. GLYPHS.HORIZONTAL .. " ", hl_group },
         },
-        virt_text_pos = "overlay",
+        virt_text_pos = "inline",
         hl_mode = "combine",
     })
 end
@@ -41,7 +41,7 @@ function ExtmarkBlock:add_footer_glyph(bufnr, line_num, hl_group)
         virt_text = {
             { GLYPHS.BOTTOM_LEFT .. GLYPHS.HORIZONTAL .. " ", hl_group },
         },
-        virt_text_pos = "overlay",
+        virt_text_pos = "inline",
         hl_mode = "combine",
     })
 end
@@ -53,7 +53,7 @@ end
 function ExtmarkBlock:add_pipe_padding(bufnr, line_num, hl_group)
     return vim.api.nvim_buf_set_extmark(bufnr, self.namespace_id, line_num, 0, {
         virt_text = { { GLYPHS.VERTICAL .. " ", hl_group } },
-        virt_text_pos = "overlay",
+        virt_text_pos = "inline",
         hl_mode = "combine",
     })
 end
