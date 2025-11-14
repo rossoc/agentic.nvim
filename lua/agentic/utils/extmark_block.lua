@@ -5,8 +5,6 @@ local GLYPHS = {
     VERTICAL = "│",
 }
 
-local NAMESPACE_ID = vim.api.nvim_create_namespace("agentic_extmark_block")
-
 ---@class agentic.utils.ExtmarkBlock
 local ExtmarkBlock = {}
 
@@ -19,39 +17,53 @@ local ExtmarkBlock = {}
 
 ---Renders a complete block with header, optional body, and optional footer
 ---@param bufnr integer
+---@param ns_id integer
 ---@param opts agentic.utils.ExtmarkBlock.RenderBlockOpts
----@return nil
-function ExtmarkBlock.render_block(bufnr, opts)
-    -- Add header glyph
-    vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE_ID, opts.header_line, 0, {
-        virt_text = {
-            { GLYPHS.TOP_LEFT .. GLYPHS.HORIZONTAL .. " ", opts.hl_group },
-        },
-        virt_text_pos = "inline",
-        hl_mode = "combine",
-    })
+---@return integer[]
+function ExtmarkBlock.render_block(bufnr, ns_id, opts)
+    local decoration_ids = {}
 
-    -- Add body pipe padding if body exists
-    if opts.body_start and opts.body_end then
-        for line_num = opts.body_start, opts.body_end do
-            vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE_ID, line_num, 0, {
-                virt_text = { { GLYPHS.VERTICAL .. " ", opts.hl_group } },
-                virt_text_pos = "inline",
-                hl_mode = "combine",
-            })
-        end
-    end
-
-    -- Add footer glyph if footer exists
-    if opts.footer_line then
-        vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE_ID, opts.footer_line, 0, {
+    table.insert(
+        decoration_ids,
+        vim.api.nvim_buf_set_extmark(bufnr, ns_id, opts.header_line, 0, {
             virt_text = {
-                { GLYPHS.BOTTOM_LEFT .. GLYPHS.HORIZONTAL .. " ", opts.hl_group },
+                { GLYPHS.TOP_LEFT .. GLYPHS.HORIZONTAL .. " ", opts.hl_group },
             },
             virt_text_pos = "inline",
             hl_mode = "combine",
         })
+    )
+
+    -- Add body pipe padding if body exists
+    if opts.body_start and opts.body_end then
+        for line_num = opts.body_start, opts.body_end do
+            table.insert(
+                decoration_ids,
+                vim.api.nvim_buf_set_extmark(bufnr, ns_id, line_num, 0, {
+                    virt_text = { { GLYPHS.VERTICAL .. " ", opts.hl_group } },
+                    virt_text_pos = "inline",
+                    hl_mode = "combine",
+                })
+            )
+        end
     end
+
+    if opts.footer_line then
+        table.insert(
+            decoration_ids,
+            vim.api.nvim_buf_set_extmark(bufnr, ns_id, opts.footer_line, 0, {
+                virt_text = {
+                    {
+                        GLYPHS.BOTTOM_LEFT .. GLYPHS.HORIZONTAL .. " ",
+                        opts.hl_group,
+                    },
+                },
+                virt_text_pos = "inline",
+                hl_mode = "combine",
+            })
+        )
+    end
+    return decoration_ids
 end
 
 return ExtmarkBlock

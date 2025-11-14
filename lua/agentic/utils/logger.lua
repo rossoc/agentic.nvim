@@ -1,9 +1,9 @@
 local Config = require("agentic.config")
 
 ---@class agentic.utils.Logger
-local M = {}
+local Logger = {}
 
-function M.get_timestamp()
+function Logger.get_timestamp()
     return os.date("%Y-%m-%d %H:%M:%S")
 end
 
@@ -23,7 +23,7 @@ local function format_debug_message(...)
     local caller_module =
         caller_source:gsub("^.*/lua/", ""):gsub("%.lua$", ""):gsub("/", ".")
 
-    local timestamp = M.get_timestamp()
+    local timestamp = Logger.get_timestamp()
     local log_parts = {
         string.format(
             "[%s] [%s:%d]",
@@ -44,7 +44,7 @@ local function format_debug_message(...)
     return log_parts
 end
 
-function M.debug(...)
+function Logger.debug(...)
     local formatted_message = format_debug_message(...)
 
     if formatted_message then
@@ -52,7 +52,7 @@ function M.debug(...)
     end
 end
 
-function M.debug_to_file(...)
+function Logger.debug_to_file(...)
     local log_parts = format_debug_message(...)
     if not log_parts then
         return
@@ -78,4 +78,4 @@ function M.debug_to_file(...)
     end
 end
 
-return M
+return Logger

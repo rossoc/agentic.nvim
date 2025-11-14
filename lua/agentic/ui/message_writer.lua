@@ -1,9 +1,19 @@
 local Logger = require("agentic.utils.logger")
 local ExtmarkBlock = require("agentic.utils.extmark_block")
-local Line = require("nui.line")
+
+---@class agentic.ui.MessageWriter.BlockTracker
+---@field extmark_id integer Range extmark spanning the block
+---@field decoration_extmark_ids integer[] IDs of decoration extmarks from ExtmarkBlock
+---@field kind string Tool call kind (read, edit, etc.)
+---@field title string Tool call title/command (stored for updates)
+---@field status string Current status (pending, completed, etc.)
+---@field end_row? integer End row of the block (cached to avoid expensive queries)
 
 ---@class agentic.ui.MessageWriter
 ---@field bufnr integer
+---@field ns_id integer Namespace for range extmarks
+---@field decorations_ns_id integer Namespace for decoration extmarks
+---@field tool_call_blocks table<string, agentic.ui.MessageWriter.BlockTracker> Map tool_call_id to extmark
 ---@field hl_group string
 local MessageWriter = {}
 MessageWriter.__index = MessageWriter
@@ -18,6 +28,11 @@ function MessageWriter:new(bufnr)
     local instance = setmetatable({
         bufnr = bufnr,
         hl_group = "Comment",
+        ns_id = vim.api.nvim_create_namespace("agentic_tool_blocks"),
+        decorations_ns_id = vim.api.nvim_create_namespace(
+            "agentic_tool_decorations"
+        ),
+        tool_call_blocks = {},
     }, self)
 
     -- Make buffer readonly for users, but we can still write programmatically
@@ -78,11 +93,6 @@ function MessageWriter:_append_lines(lines)
     vim.bo[self.bufnr].modifiable = false
 end
 
----@class agentic.ui.MessageWriter.WriteToolCallBlockOpts
----@field header_text string
----@field body_lines? string[]
----@field footer_text? string
-
 ---@param update agentic.acp.ToolCallMessage
 function MessageWriter:write_tool_call_block(update)
     if not vim.api.nvim_buf_is_valid(self.bufnr) then
@@ -91,57 +101,221 @@ function MessageWriter:write_tool_call_block(update)
     end
 
     local kind = update.kind or "tool_call"
-    local command = update.title
-    local header_text = string.format("%s(%s)", kind, command)
+    local command = update.title or ""
 
     vim.bo[self.bufnr].modifiable = true
 
-    local line_count = vim.api.nvim_buf_line_count(self.bufnr)
-    local current_line = line_count + 1
+    local start_row = vim.api.nvim_buf_line_count(self.bufnr)
+    local lines = self:_prepare_block_lines(update, kind, command)
+    self:_append_lines(lines)
+    local end_row = vim.api.nvim_buf_line_count(self.bufnr) - 1
 
-    local header_line_num = nil
-    local header_line = Line()
-    header_line:append(header_text, self.hl_group)
+    local decoration_ids =
+        ExtmarkBlock.render_block(self.bufnr, self.decorations_ns_id, {
+            header_line = start_row,
+            body_start = start_row + 1,
+            body_end = end_row - 1,
+            footer_line = end_row,
+            hl_group = self.hl_group,
+        })
 
-    header_line:render(self.bufnr, -1, current_line)
-    header_line_num = current_line
-    current_line = current_line + 1
+    -- Create range extmark for tracking (omit end_col to default to end of line)
+    local extmark_id =
+        vim.api.nvim_buf_set_extmark(self.bufnr, self.ns_id, start_row, 0, {
+            end_row = end_row,
+            right_gravity = false,
+        })
 
-    local body_lines = {}
-    local body_start_line = nil
-    local body_end_line = nil
-    if #body_lines > 0 then
-        body_start_line = current_line
-        vim.api.nvim_buf_set_lines(self.bufnr, -1, -1, false, body_lines)
-        body_end_line = current_line + #body_lines - 1
-        current_line = current_line + #body_lines
+    -- Track externally (store kind and title for ToolCallUpdate which lacks them)
+    self.tool_call_blocks[update.toolCallId] = {
+        extmark_id = extmark_id,
+        decoration_extmark_ids = decoration_ids,
+        kind = kind,
+        title = command,
+        status = update.status,
+        end_row = end_row,
+    }
+
+    self:_append_lines({ "", "" })
+    vim.bo[self.bufnr].modifiable = false
+end
+
+---@param update agentic.acp.ToolCallUpdate
+function MessageWriter:update_tool_call_block(update)
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        Logger.debug("MessageWriter: Buffer is no longer valid")
+        return
     end
 
-    local footer_text = update.status
-    local footer_line_num = nil
-    if footer_text ~= nil then
-        local footer_line = Line()
-        if footer_text ~= "" then
-            footer_line:append(footer_text, self.hl_group)
-        end
-        footer_line:render(self.bufnr, -1, current_line)
-        footer_line_num = current_line
+    local tracker = self.tool_call_blocks[update.toolCallId]
+    if not tracker then
+        Logger.debug(
+            "Tool call block not found",
+            { tool_call_id = update.toolCallId }
+        )
+
+        return
     end
+
+    local pos, details = vim.api.nvim_buf_get_extmark_by_id(
+        self.bufnr,
+        self.ns_id,
+        tracker.extmark_id,
+        { details = true }
+    )
+
+    if not pos then
+        Logger.debug("Extmark not found", { tool_call_id = update.toolCallId })
+        return
+    end
+
+    local start_row = pos[1]
+
+    local old_end_row = tracker.end_row or (details and details.end_row)
+    if not old_end_row then
+        Logger.debug(
+            "Could not determine end row of tool call block",
+            { tool_call_id = update.toolCallId }
+        )
+        return
+    end
+
+    vim.bo[self.bufnr].modifiable = true
+
+    for _, id in ipairs(tracker.decoration_extmark_ids) do
+        pcall(
+            vim.api.nvim_buf_del_extmark,
+            self.bufnr,
+            self.decorations_ns_id,
+            id
+        )
+    end
+
+    local new_lines =
+        self:_prepare_block_lines(update, tracker.kind, tracker.title)
+
+    vim.api.nvim_buf_set_lines(
+        self.bufnr,
+        start_row,
+        old_end_row + 1,
+        false,
+        new_lines
+    )
+
+    local new_end_row = start_row + #new_lines - 1
+
+    -- Update range extmark in-place (REUSE ID)
+    vim.api.nvim_buf_set_extmark(self.bufnr, self.ns_id, start_row, 0, {
+        id = tracker.extmark_id, -- CRITICAL: reuse same ID
+        end_row = new_end_row,
+        right_gravity = false,
+    })
+
+    -- Re-apply visual decorations
+    tracker.decoration_extmark_ids =
+        ExtmarkBlock.render_block(self.bufnr, self.decorations_ns_id, {
+            header_line = start_row,
+            body_start = start_row + 1,
+            body_end = new_end_row - 1,
+            footer_line = new_end_row,
+            hl_group = self.hl_group,
+        })
 
     vim.bo[self.bufnr].modifiable = false
 
-    -- Add virtual decorators using ExtmarkBlock
-    -- Note: ExtmarkBlock expects 0-indexed line numbers, but we track 1-indexed
-    ExtmarkBlock.render_block(self.bufnr, {
-        header_line = header_line_num - 1,
-        body_start = body_start_line and (body_start_line - 1) or nil,
-        body_end = body_end_line and (body_end_line - 1) or nil,
-        footer_line = footer_line_num and (footer_line_num - 1) or nil,
-        hl_group = self.hl_group,
-    })
+    tracker.status = update.status or tracker.status
+    tracker.end_row = new_end_row
+end
 
-    -- Append 2 blank lines after each block
-    self:_append_lines({ "", "" })
+---@param update agentic.acp.ToolCallMessage | agentic.acp.ToolCallUpdate
+---@param kind? string Tool call kind (required for ToolCallUpdate)
+---@param title? string Tool call title (required for ToolCallUpdate)
+---@return string[] lines Array of lines to render
+function MessageWriter:_prepare_block_lines(update, kind, title)
+    local lines = {}
+
+    kind = kind or update.kind or "tool_call"
+    title = title or update.title or ""
+    local header_text = string.format("%s(%s)", kind, title)
+    table.insert(lines, header_text)
+
+    if update.content and #update.content > 0 then
+        for _, content_item in ipairs(update.content) do
+            if content_item.type == "content" and content_item.content then
+                if content_item.content.type == "text" then
+                    local text = content_item.content.text or ""
+                    if text == "" then
+                        table.insert(lines, "")
+                    else
+                        -- Split text by newlines, handling empty lines properly
+                        local text_lines =
+                            vim.split(text, "\n", { plain = true })
+                        for _, line in ipairs(text_lines) do
+                            table.insert(lines, line)
+                        end
+                    end
+                elseif content_item.content.type == "resource" then
+                    local resource_text = content_item.content.resource.text
+                        or ""
+                    for line in resource_text:gmatch("[^\n]+") do
+                        table.insert(lines, line)
+                    end
+                end
+            elseif content_item.type == "diff" then
+                table.insert(
+                    lines,
+                    string.format("diff: %s", content_item.path)
+                )
+            end
+        end
+    end
+
+    local footer_text = tostring(update.status or "")
+    if footer_text ~= "" then
+        table.insert(lines, footer_text)
+    end
+
+    return lines
+end
+
+---@param tool_call_id string
+function MessageWriter:remove_tool_call_block(tool_call_id)
+    local tracker = self.tool_call_blocks[tool_call_id]
+    if not tracker then
+        return
+    end
+
+    pcall(
+        vim.api.nvim_buf_del_extmark,
+        self.bufnr,
+        self.ns_id,
+        tracker.extmark_id
+    )
+
+    if tracker.decoration_extmark_ids then
+        for _, id in ipairs(tracker.decoration_extmark_ids) do
+            pcall(
+                vim.api.nvim_buf_del_extmark,
+                self.bufnr,
+                self.decorations_ns_id,
+                id
+            )
+        end
+    end
+
+    self.tool_call_blocks[tool_call_id] = nil
+end
+
+function MessageWriter:cleanup()
+    pcall(vim.api.nvim_buf_clear_namespace, self.bufnr, self.ns_id, 0, -1)
+    pcall(
+        vim.api.nvim_buf_clear_namespace,
+        self.bufnr,
+        self.decorations_ns_id,
+        0,
+        -1
+    )
+    self.tool_call_blocks = {}
 end
 
 return MessageWriter

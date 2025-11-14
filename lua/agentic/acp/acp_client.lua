@@ -1,10 +1,6 @@
 local logger = require("agentic.utils.logger")
 local transport_module = require("agentic.acp.acp_transport")
 
----FIXIT: try to delete convenience methods down below to not keep unused code
-
---- TODO: This should inherit from a base Client interface to allow for other protocols
----
 ---@class agentic.acp.ACPClient
 ---@field provider_config agentic.acp.ClientConfig
 ---@field id_counter number
@@ -49,7 +45,6 @@ function ACPClient:new(config, handlers)
                 version = "0.0.1",
             },
         },
-        pending_responses = {},
         callbacks = {},
         transport = nil,
         state = "disconnected",
@@ -104,13 +99,11 @@ function ACPClient:_setup_transport()
     end
 end
 
----Set connection state
 ---@param state agentic.acp.ClientConnectionState
 function ACPClient:_set_state(state)
     self.state = state
 end
 
----Create error object
 ---@param code number
 ---@param message string
 ---@param data any?
@@ -150,7 +143,6 @@ function ACPClient:_send_request(method, params, callback)
     self.transport:send(data)
 end
 
----Send JSON-RPC notification
 ---@param method string
 ---@param params table?
 function ACPClient:_send_notification(method, params)
@@ -167,7 +159,6 @@ function ACPClient:_send_notification(method, params)
     self.transport:send(data)
 end
 
----Send JSON-RPC result
 ---@param id number
 ---@param result table | string | vim.NIL | nil
 ---@return nil
@@ -180,7 +171,6 @@ function ACPClient:_send_result(id, result)
     self.transport:send(data)
 end
 
----Send JSON-RPC error
 ---@param id number
 ---@param message string
 ---@param code? number
@@ -216,8 +206,6 @@ function ACPClient:_handle_message(message)
                     .. vim.inspect(message),
                 vim.log.levels.WARN
             )
-            self.pending_responses[message.id] =
-                { message.result, message.error }
         end
     else
         vim.notify(
@@ -356,8 +344,6 @@ end
 
 function ACPClient:stop()
     self.transport:stop()
-    -- FIXIT: check if it's possible to remove pending responses and use callbacks only
-    self.pending_responses = {}
 end
 
 function ACPClient:_initialize()
@@ -685,7 +671,7 @@ return ACPClient
 ---@field toolCallId string
 ---@field title? string most likely the command to be executed
 ---@field kind? agentic.acp.ToolKind
----@field status? agentic.acp.ToolCallStatus
+---@field status agentic.acp.ToolCallStatus
 ---@field content? agentic.acp.ACPToolCallContent[]
 ---@field locations? agentic.acp.ToolCallLocation[]
 ---@field rawInput? agentic.acp.RawInput
@@ -696,6 +682,7 @@ return ACPClient
 ---@field sessionUpdate "tool_call_update"
 ---@field status agentic.acp.ToolCallStatus
 ---@field content agentic.acp.ACPToolCallContent[]
+---@field toolCallId string
 
 ---@class agentic.acp.PlanUpdate
 ---@field sessionUpdate "plan"

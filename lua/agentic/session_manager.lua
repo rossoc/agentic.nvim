@@ -184,6 +184,7 @@ function P.on_session_update(session, update)
     elseif update.sessionUpdate == "tool_call" then
         session.message_writer:write_tool_call_block(update)
     elseif update.sessionUpdate == "tool_call_update" then
+        session.message_writer:update_tool_call_block(update)
     elseif update.sessionUpdate == "available_commands_update" then
     else
         -- TODO: Move this to Logger when confidence is high
