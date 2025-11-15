@@ -1,0 +1,169 @@
+local Logger = require("agentic.utils.logger")
+
+---@class agentic.ui.PermissionManager
+---@field bufnr integer Buffer number where buttons are displayed
+---@field message_writer agentic.ui.MessageWriter Reference to MessageWriter instance
+---@field queue table[] Queue of pending requests {toolCallId, request, callback}
+---@field current_request? agentic.ui.PermissionManager.PermissionRequest Currently displayed request with button positions
+---@field keymap_info table[] Keymap info for cleanup {mode, lhs}
+local PermissionManager = {}
+PermissionManager.__index = PermissionManager
+
+---@param bufnr integer
+---@param message_writer agentic.ui.MessageWriter
+---@return agentic.ui.PermissionManager
+function PermissionManager:new(bufnr, message_writer)
+    local instance = setmetatable({
+        bufnr = bufnr,
+        message_writer = message_writer,
+        queue = {},
+        current_request = nil,
+        keymap_info = {},
+    }, self)
+
+    return instance
+end
+
+---@param request agentic.acp.RequestPermission
+---@param callback fun(option_id: string|nil)
+function PermissionManager:add_request(request, callback)
+    if not request.toolCall or not request.toolCall.toolCallId then
+        Logger.debug(
+            "PermissionManager: Invalid request - missing toolCall.toolCallId"
+        )
+        return
+    end
+
+    local toolCallId = request.toolCall.toolCallId
+    table.insert(self.queue, { toolCallId, request, callback })
+
+    if not self.current_request then
+        self:_process_next()
+    end
+end
+
+function PermissionManager:_process_next()
+    if #self.queue == 0 then
+        return
+    end
+
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        Logger.debug("PermissionManager: Buffer is no longer valid")
+        return
+    end
+
+    local item = table.remove(self.queue, 1)
+    local toolCallId = item[1]
+    local request = item[2]
+    local callback = item[3]
+
+    local button_start_row, button_end_row, option_mapping =
+        self.message_writer:display_permission_buttons(request)
+
+    ---@class agentic.ui.PermissionManager.PermissionRequest
+    self.current_request = {
+        toolCallId = toolCallId,
+        request = request,
+        callback = callback,
+        button_start_row = button_start_row,
+        button_end_row = button_end_row,
+        option_mapping = option_mapping,
+    }
+
+    self:_setup_keymaps(option_mapping)
+end
+
+---Complete the current request and process next in queue
+---@param option_id string|nil
+function PermissionManager:_complete_request(option_id)
+    local current = self.current_request
+    if not current then
+        Logger.debug("PermissionManager: No current request to complete")
+        return
+    end
+
+    if vim.api.nvim_buf_is_valid(self.bufnr) then
+        self.message_writer:remove_permission_buttons(
+            current.button_start_row,
+            current.button_end_row
+        )
+    end
+
+    self:_remove_keymaps()
+
+    -- Only call the callback if an option was selected, otherwise nil indicates cancellation or timeout
+    if option_id then
+        current.callback(option_id)
+    end
+
+    self.current_request = nil
+    self:_process_next()
+end
+
+---Clear all displayed buttons and keymaps, clear queue
+function PermissionManager:clear()
+    if self.current_request then
+        if vim.api.nvim_buf_is_valid(self.bufnr) then
+            self.message_writer:remove_permission_buttons(
+                self.current_request.button_start_row,
+                self.current_request.button_end_row
+            )
+        end
+        self:_remove_keymaps()
+    end
+
+    self.current_request = nil
+    self.queue = {}
+end
+
+---Remove permission request for a specific tool call ID (e.g., when tool call fails)
+---@param toolCallId string
+function PermissionManager:remove_request_by_tool_call_id(toolCallId)
+    self.queue = vim.tbl_filter(function(item)
+        return item[1] ~= toolCallId
+    end, self.queue)
+
+    if
+        self.current_request
+        and self.current_request.toolCallId == toolCallId
+    then
+        self:_complete_request(nil)
+    end
+end
+
+---@param option_mapping table<integer, string> Mapping from number (1-N) to option_id
+function PermissionManager:_setup_keymaps(option_mapping)
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        Logger.debug("PermissionManager: Buffer is no longer valid for keymaps")
+        return
+    end
+
+    self:_remove_keymaps()
+
+    -- Add buffer-local key mappings for each option
+    for number, option_id in pairs(option_mapping) do
+        local lhs = tostring(number)
+        local callback = function()
+            self:_complete_request(option_id)
+        end
+
+        vim.keymap.set("n", lhs, callback, {
+            buffer = self.bufnr,
+            desc = "Select permission option " .. tostring(number),
+        })
+        table.insert(self.keymap_info, { mode = "n", lhs = lhs })
+    end
+end
+
+function PermissionManager:_remove_keymaps()
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        return
+    end
+
+    for _, info in ipairs(self.keymap_info) do
+        pcall(vim.keymap.del, info.mode, info.lhs, { buffer = self.bufnr })
+    end
+    self.keymap_info = {}
+end
+
+return PermissionManager

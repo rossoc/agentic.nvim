@@ -727,7 +727,6 @@ return ACPClient
 ---@field rawInput? agentic.acp.RawInput
 ---@field rawOutput? table
 
----The result status of a tool call, like "completed" or "failed" or "rejected"
 ---@class agentic.acp.ToolCallUpdate
 ---@field sessionUpdate "tool_call_update"
 ---@field status agentic.acp.ToolCallStatus
@@ -747,6 +746,7 @@ return ACPClient
 --- | agentic.acp.AgentMessageChunk
 --- | agentic.acp.AgentThoughtChunk
 --- | agentic.acp.ToolCallMessage
+--- | agentic.acp.ToolCallUpdate
 --- | agentic.acp.PlanUpdate
 --- | agentic.acp.AvailableCommandsUpdate
 

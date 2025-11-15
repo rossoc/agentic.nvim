@@ -14,6 +14,7 @@ local P = {}
 ---@field widget agentic.ui.ChatWidget
 ---@field agent agentic.acp.ACPClient
 ---@field message_writer agentic.ui.MessageWriter
+---@field permission_manager agentic.ui.PermissionManager
 ---@field selected_files string[] Absolute paths of selected files to be sent with the next prompt, should be cleared after sending
 local SessionManager = {}
 
@@ -23,6 +24,7 @@ function SessionManager:new(tab_page_id)
     local Config = require("agentic.config")
     local ChatWidget = require("agentic.ui.chat_widget")
     local MessageWriter = require("agentic.ui.message_writer")
+    local PermissionManager = require("agentic.ui.permission_manager")
 
     local instance = setmetatable({
         message_writer = nil,
@@ -99,6 +101,11 @@ function SessionManager:new(tab_page_id)
     instance.message_writer =
         MessageWriter:new(instance.widget.panels.chat.bufnr)
 
+    instance.permission_manager = PermissionManager:new(
+        instance.widget.panels.chat.bufnr,
+        instance.message_writer
+    )
+
     ---@type agentic.acp.ClientHandlers
     local handlers = {
         on_error = function(err)
@@ -125,7 +132,7 @@ function SessionManager:new(tab_page_id)
         end,
 
         on_request_permission = function(request, callback)
-            -- FIXIT: Handle permission requests from the agent
+            instance.permission_manager:add_request(request, callback)
         end,
     }
 
@@ -187,6 +194,12 @@ function P.on_session_update(session, update)
         session.message_writer:write_tool_call_block(update)
     elseif update.sessionUpdate == "tool_call_update" then
         session.message_writer:update_tool_call_block(update)
+
+        if update.status == "failed" then
+            session.permission_manager:remove_request_by_tool_call_id(
+                update.toolCallId
+            )
+        end
     elseif update.sessionUpdate == "available_commands_update" then
     else
         -- TODO: Move this to Logger when confidence is high
@@ -243,11 +256,13 @@ function P.on_write_file(abs_path, content, callback)
 
         local bufnr = next(buffers)
 
-        if bufnr then
-            vim.api.nvim_buf_call(bufnr, function()
-                local view = vim.fn.winsaveview()
-                vim.cmd("checktime")
-                vim.fn.winrestview(view)
+        if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+            pcall(function()
+                vim.api.nvim_buf_call(bufnr, function()
+                    local view = vim.fn.winsaveview()
+                    vim.cmd("checktime")
+                    vim.fn.winrestview(view)
+                end)
             end)
         end
 
@@ -288,11 +303,12 @@ function P._read_file_from_buf_or_disk(abs_path)
 end
 
 function SessionManager:destroy()
-    self.widget:destroy()
-    self.message_writer:destroy()
     if self.session_id then
         self.agent:unsubscribe(self.session_id)
     end
+    self.permission_manager:clear()
+    self.widget:destroy()
+    self.message_writer:destroy()
 end
 
 return SessionManager

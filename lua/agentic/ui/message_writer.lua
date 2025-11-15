@@ -13,10 +13,32 @@ local ExtmarkBlock = require("agentic.utils.extmark_block")
 ---@field bufnr integer
 ---@field ns_id integer Namespace for range extmarks
 ---@field decorations_ns_id integer Namespace for decoration extmarks
+---@field permission_buttons_ns_id integer Namespace for permission button extmarks
 ---@field tool_call_blocks table<string, agentic.ui.MessageWriter.BlockTracker> Map tool_call_id to extmark
 ---@field hl_group string
 local MessageWriter = {}
 MessageWriter.__index = MessageWriter
+
+-- Priority order for permission option kinds based on ACP tool-calls documentation
+-- Lower number = higher priority (appears first)
+-- Order from https://agentclientprotocol.com/protocol/tool-calls.md:
+-- 1. allow_once - Allow this operation only this time
+-- 2. allow_always - Allow this operation and remember the choice
+-- 3. reject_once - Reject this operation only this time
+-- 4. reject_always - Reject this operation and remember the choice
+local _PERMISSION_KIND_PRIORITY = {
+    allow_once = 1,
+    allow_always = 2,
+    reject_once = 3,
+    reject_always = 4,
+}
+
+local _PERMISSION_ICON = {
+    allow_once = "",
+    allow_always = "",
+    reject_once = "󰅗",
+    reject_always = "󰱝",
+}
 
 ---@param bufnr integer
 ---@return agentic.ui.MessageWriter
@@ -31,6 +53,9 @@ function MessageWriter:new(bufnr)
         ns_id = vim.api.nvim_create_namespace("agentic_tool_blocks"),
         decorations_ns_id = vim.api.nvim_create_namespace(
             "agentic_tool_decorations"
+        ),
+        permission_buttons_ns_id = vim.api.nvim_create_namespace(
+            "agentic_permission_buttons"
         ),
         tool_call_blocks = {},
     }, self)
@@ -86,6 +111,11 @@ function MessageWriter:_append_lines(lines)
     vim.api.nvim_buf_set_lines(self.bufnr, -1, -1, false, lines)
 
     vim.bo[self.bufnr].modifiable = false
+
+    vim.api.nvim_buf_call(self.bufnr, function()
+        vim.cmd("normal! G")
+        vim.cmd("redraw")
+    end)
 end
 
 ---@param update agentic.acp.ToolCallMessage
@@ -273,12 +303,126 @@ function MessageWriter:_prepare_block_lines(update, kind, title)
     return lines
 end
 
+---Display permission request buttons at the end of the buffer
+---@param request agentic.acp.RequestPermission
+---@return integer button_start_row Start row of button block
+---@return integer button_end_row End row of button block
+---@return table<integer, string> option_mapping Mapping from number (1-N) to option_id
+function MessageWriter:display_permission_buttons(request)
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        Logger.debug("MessageWriter: Buffer is no longer valid")
+        return 0, 0, {}
+    end
+
+    if not request.toolCall or not request.options or #request.options == 0 then
+        Logger.debug("MessageWriter: Invalid permission request")
+        return 0, 0, {}
+    end
+
+    local option_mapping = {}
+    local sorted_options = self._sort_permission_options(request.options)
+
+    local lines_to_append = {
+        string.format("### Waiting for your response:  "),
+        "",
+    }
+
+    for i, option in ipairs(sorted_options) do
+        table.insert(
+            lines_to_append,
+            string.format(
+                "- [%d] %s %s",
+                i,
+                _PERMISSION_ICON[option.kind] or "",
+                option.name
+            )
+        )
+        option_mapping[i] = option.optionId
+    end
+
+    table.insert(lines_to_append, "------")
+    table.insert(lines_to_append, "")
+
+    local button_start_row = vim.api.nvim_buf_line_count(self.bufnr)
+
+    self:_append_lines(lines_to_append)
+
+    local button_end_row = vim.api.nvim_buf_line_count(self.bufnr) - 1
+
+    -- Create extmark to track button block
+    vim.api.nvim_buf_set_extmark(
+        self.bufnr,
+        self.permission_buttons_ns_id,
+        button_start_row,
+        0,
+        {
+            end_row = button_end_row,
+            right_gravity = false,
+        }
+    )
+
+    return button_start_row, button_end_row, option_mapping
+end
+
+---@param options agentic.acp.PermissionOption[]
+---@return agentic.acp.PermissionOption[]
+function MessageWriter._sort_permission_options(options)
+    local sorted = {}
+    for _, option in ipairs(options) do
+        table.insert(sorted, option)
+    end
+
+    table.sort(sorted, function(a, b)
+        local priority_a = _PERMISSION_KIND_PRIORITY[a.kind] or 999
+        local priority_b = _PERMISSION_KIND_PRIORITY[b.kind] or 999
+        return priority_a < priority_b
+    end)
+
+    return sorted
+end
+
+---@param start_row integer Start row of button block
+---@param end_row integer End row of button block
+function MessageWriter:remove_permission_buttons(start_row, end_row)
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+        Logger.debug("MessageWriter: Buffer is no longer valid")
+        return
+    end
+
+    pcall(
+        vim.api.nvim_buf_clear_namespace,
+        self.bufnr,
+        self.permission_buttons_ns_id,
+        start_row,
+        end_row + 1
+    )
+
+    vim.bo[self.bufnr].modifiable = true
+
+    pcall(
+        vim.api.nvim_buf_set_lines,
+        self.bufnr,
+        start_row,
+        end_row + 1,
+        false,
+        {}
+    )
+    vim.bo[self.bufnr].modifiable = false
+end
+
 function MessageWriter:destroy()
     pcall(vim.api.nvim_buf_clear_namespace, self.bufnr, self.ns_id, 0, -1)
     pcall(
         vim.api.nvim_buf_clear_namespace,
         self.bufnr,
         self.decorations_ns_id,
+        0,
+        -1
+    )
+    pcall(
+        vim.api.nvim_buf_clear_namespace,
+        self.bufnr,
+        self.permission_buttons_ns_id,
         0,
         -1
     )
