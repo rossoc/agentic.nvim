@@ -68,6 +68,8 @@ function SessionManager:_on_session_update(update)
     -- order the IF blocks in order of likeliness to be called for performance
 
     if update.sessionUpdate == "plan" then
+        -- FIXIT: implement plan handling
+        Logger.debug("Implement plan handling")
     elseif update.sessionUpdate == "agent_message_chunk" then
         self.message_writer:write_message(update)
     elseif update.sessionUpdate == "user_message_chunk" then
@@ -85,6 +87,8 @@ function SessionManager:_on_session_update(update)
             )
         end
     elseif update.sessionUpdate == "available_commands_update" then
+        -- FIXIT: implement available slash commands handling
+        Logger.debug("Implement available_commands_update handling")
     else
         -- TODO: Move this to Logger when confidence is high
         vim.notify(
@@ -112,7 +116,7 @@ function SessionManager:_handle_input_submit(input_text)
 
     --- The message to be written to the chat widget
     local message_lines = {
-        string.format("## User - %s", os.date("%Y-%m-%d %H:%M:%S")),
+        string.format("##  User - %s", os.date("%Y-%m-%d %H:%M:%S")),
     }
 
     table.insert(message_lines, "")
@@ -202,7 +206,7 @@ function SessionManager:_handle_input_submit(input_text)
         table.insert(message_lines, "\n")
     end
 
-    table.insert(message_lines, "\n\n### Agent - " .. self.current_provider)
+    table.insert(message_lines, "\n### 󱚠 Agent - " .. self.current_provider)
 
     self.message_writer:write_message(
         self.agent:generate_user_message(message_lines)
