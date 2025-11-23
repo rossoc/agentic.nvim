@@ -2,32 +2,46 @@ local Config = require("agentic.config")
 local FileSystem = require("agentic.utils.file_system")
 local BufHelpers = require("agentic.utils.buf_helpers")
 local Logger = require("agentic.utils.logger")
+local WindowDecoration = require("agentic.ui.window_decoration")
 
----@class agentic.ui.ChatWidget.BufNrs
----@field chat number
----@field todos number
----@field code number
----@field files number
----@field input number
+--- @alias agentic.ui.ChatWidget.PanelNames "chat"|"todos"|"code"|"files"|"input"
 
----@class agentic.ui.ChatWidget.WinNrs
----@field chat? number
----@field todos? number
----@field code? number
----@field files? number
----@field input? number
+--- @alias agentic.ui.ChatWidget.BufNrs table<agentic.ui.ChatWidget.PanelNames, integer>
+--- @alias agentic.ui.ChatWidget.WinNrs table<agentic.ui.ChatWidget.PanelNames, integer|nil>
 
----@class agentic.ui.ChatWidget
----@field tab_page_id integer
----@field buf_nrs agentic.ui.ChatWidget.BufNrs
----@field win_nrs agentic.ui.ChatWidget.WinNrs
----@field is_streaming boolean
----@field on_submit_input fun(prompt: string) external callback to be called when user submits the input
+--- @type table<agentic.ui.ChatWidget.PanelNames, { title: string, suffix?: string|fun(self: agentic.ui.ChatWidget): string }>
+local WINDOW_HEADERS = {
+    chat = { title = "󰻞 Agentic Chat" },
+    input = { title = "󰦨 Prompt", suffix = "| <C-s>: submit" },
+    code = { title = "󰪸 Selected Code Snippets" },
+    files = {
+        title = " Referenced Files",
+        suffix = function(self)
+            local lines =
+                vim.api.nvim_buf_get_lines(self.buf_nrs.files, 0, -1, false)
+            local file_count = 0
+            for _, line in ipairs(lines) do
+                if line:match("%S") then
+                    file_count = file_count + 1
+                end
+            end
+            return string.format("(%d)", file_count)
+        end,
+    },
+}
+
+--- A sidebar-style chat widget with multiple windows stacked vertically
+--- The main chat window is the first, and contains the width, the below ones adapt to its size
+--- @class agentic.ui.ChatWidget
+--- @field tab_page_id integer
+--- @field buf_nrs agentic.ui.ChatWidget.BufNrs
+--- @field win_nrs agentic.ui.ChatWidget.WinNrs
+--- @field on_submit_input fun(prompt: string) external callback to be called when user submits the input
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
 
----@param tab_page_id integer
----@param on_submit_input fun(prompt: string)
+--- @param tab_page_id integer
+--- @param on_submit_input fun(prompt: string)
 function ChatWidget:new(tab_page_id, on_submit_input)
     local instance = setmetatable({
         win_nrs = {},
@@ -51,9 +65,13 @@ function ChatWidget:show()
         not self.win_nrs.chat
         or not vim.api.nvim_win_is_valid(self.win_nrs.chat)
     then
-        self.win_nrs.chat = self:_open_win(self.buf_nrs.chat, false, {}, {
+        self.win_nrs.chat = self:_open_win(self.buf_nrs.chat, false, {
+            -- Only the top most needs a fixed width, others adapt to available space
+            width = self._calculate_width(Config.windows.width),
+        }, {
             winfixheight = false,
         })
+        self:_render_header("chat")
     end
 
     if
@@ -66,32 +84,35 @@ function ChatWidget:show()
             height = Config.windows.input.height,
             fixed = true,
         }, {})
+        self:_render_header("input")
     end
 
     if
         (
             not self.win_nrs.code
             or not vim.api.nvim_win_is_valid(self.win_nrs.code)
-        ) and not self:_is_buffer_empty(self.buf_nrs.code)
+        ) and not BufHelpers.is_buffer_empty(self.buf_nrs.code)
     then
         self.win_nrs.code = self:_open_win(self.buf_nrs.code, false, {
             win = self.win_nrs.chat,
             split = "below",
             height = 15,
         }, {})
+        self:_render_header("code")
     end
 
     if
         (
             not self.win_nrs.files
             or not vim.api.nvim_win_is_valid(self.win_nrs.files)
-        ) and not self:_is_buffer_empty(self.buf_nrs.files)
+        ) and not BufHelpers.is_buffer_empty(self.buf_nrs.files)
     then
         self.win_nrs.files = self:_open_win(self.buf_nrs.files, false, {
             win = self.win_nrs.input,
             split = "above",
             height = 5,
         }, {})
+        self:_render_header("files")
     end
 
     self:_move_cursor_to(
@@ -223,8 +244,8 @@ function ChatWidget:_submit_input()
     self:_move_cursor_to(self.win_nrs.chat)
 end
 
----@param winid? integer
----@param callback? fun()
+--- @param winid? integer
+--- @param callback? fun()
 function ChatWidget:_move_cursor_to(winid, callback)
     vim.schedule(function()
         if winid and vim.api.nvim_win_is_valid(winid) then
@@ -282,31 +303,7 @@ function ChatWidget:_initialize()
     return buf_nrs
 end
 
----@param bufnr integer
----@return boolean
-function ChatWidget:_is_buffer_empty(bufnr)
-    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-    if #lines == 0 then
-        return true
-    end
-
-    -- Check if buffer contains only whitespace or a single empty line
-    if #lines == 1 and lines[1]:match("^%s*$") then
-        return true
-    end
-
-    -- Check if all lines are whitespace
-    for _, line in ipairs(lines) do
-        if line:match("%S") then
-            return false
-        end
-    end
-
-    return true
-end
-
----@return agentic.ui.ChatWidget.BufNrs
+--- @return agentic.ui.ChatWidget.BufNrs
 function ChatWidget:_create_buf_nrs()
     local chat = self:_create_new_buf({
         filetype = "AgenticChat",
@@ -330,11 +327,12 @@ function ChatWidget:_create_buf_nrs()
     })
 
     -- Don't call it for the chat buffer as its managed somewhere else
+    pcall(vim.treesitter.start, todos, "markdown")
     pcall(vim.treesitter.start, code, "markdown")
     pcall(vim.treesitter.start, files, "markdown")
     pcall(vim.treesitter.start, input, "markdown")
 
-    ---@type agentic.ui.ChatWidget.BufNrs
+    --- @type agentic.ui.ChatWidget.BufNrs
     local buf_nrs = {
         chat = chat,
         todos = todos,
@@ -360,9 +358,10 @@ function ChatWidget:_create_new_buf(opts)
         syntax = "markdown",
     }, opts)
 
-    for name, value in pairs(config) do
-        vim.api.nvim_set_option_value(name, value, { buf = bufnr })
+    for key, value in pairs(config) do
+        vim.api.nvim_set_option_value(key, value, { buf = bufnr })
     end
+
     return bufnr
 end
 
@@ -372,13 +371,12 @@ end
 --- @param win_opts table<string, any>
 --- @return integer winid
 function ChatWidget:_open_win(bufnr, enter, opts, win_opts)
-    ---@type vim.api.keyset.win_config
+    --- @type vim.api.keyset.win_config
     local default_opts = {
         split = "right",
         win = -1,
         noautocmd = true,
         style = "minimal",
-        width = self._calculate_width(Config.windows.width),
     }
 
     local config = vim.tbl_deep_extend("force", default_opts, opts)
@@ -387,8 +385,10 @@ function ChatWidget:_open_win(bufnr, enter, opts, win_opts)
 
     local merged_win_opts = vim.tbl_deep_extend("force", {
         wrap = true,
+        linebreak = true,
         winfixbuf = true,
         winfixheight = true,
+        -- winhighlight = "Normal:NormalFloat,WinSeparator:FloatBorder",
     }, win_opts or {})
 
     for name, value in pairs(merged_win_opts) do
@@ -400,8 +400,8 @@ end
 
 --- Calculate width based on editor dimensions
 --- Accepts percentage strings ("30%"), decimals (0.3), or absolute numbers (80)
----@param size number|string
----@return integer width
+--- @param size number|string
+--- @return integer width
 function ChatWidget._calculate_width(size)
     local editor_width = vim.o.columns
 
@@ -426,6 +426,31 @@ function ChatWidget._calculate_width(size)
     end
 
     return value
+end
+
+--- @param window_name agentic.ui.ChatWidget.PanelNames
+function ChatWidget:_render_header(window_name)
+    local winid = self.win_nrs[window_name]
+    if not winid then
+        return
+    end
+
+    local config = WINDOW_HEADERS[window_name]
+    if not config then
+        return
+    end
+
+    local opts = { title = config.title }
+
+    if config.suffix then
+        if type(config.suffix) == "function" then
+            opts.suffix = config.suffix(self)
+        else
+            opts.suffix = config.suffix
+        end
+    end
+
+    WindowDecoration.render_window_header(winid, opts)
 end
 
 return ChatWidget

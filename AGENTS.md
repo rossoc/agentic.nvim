@@ -3,6 +3,212 @@
 agentic.nvim is a Neovim plugin that emulates Cursor AI IDE behavior, providing
 AI-driven code assistance through a chat sidebar for interactive conversations.
 
+## 🚨 CRITICAL: Multi-Tabpage Architecture
+
+**EVERY FEATURE MUST BE MULTI-TAB SAFE** - This plugin supports **one instance
+per tabpage**.
+
+### Architecture Overview
+
+- **Tabpage instance control:** `lua/agentic/init.lua` maintains
+  `chat_widgets_by_tab` table
+- **1 ACP provider instance** (single subprocess per provider) shared across all
+  tabpages
+- **1 ACP session ID per tabpage** - The ACP protocol supports multiple sessions
+  per instance
+- **1 SessionManager + 1 ChatWidget per tabpage** - Full UI isolation between
+  tabpages
+
+- Each tabpage has independent:
+  - ACP session ID (tracked by the shared provider)
+  - Chat widget (buffers, windows, state)
+  - Status animation
+  - All UI state and resources
+
+### Implementation Requirements
+
+When implementing ANY feature:
+
+1. **NEVER use module-level shared state** for per-tabpage runtime data
+   - ❌ `local current_session = nil` (single session for all tabs)
+   - ✅ Store per-tabpage state in tabpage-scoped instances
+   - ✅ Module-level constants OK for truly global config: `local CONFIG = {}`
+
+2. **Namespaces are GLOBAL but extmarks are BUFFER-SCOPED**
+   - ✅ `local NS_ID = vim.api.nvim_create_namespace("agentic_animation")` -
+     Module-level OK
+   - ✅ Namespaces can be shared across tabpages safely
+   - **Why:** Extmarks are stored per-buffer, and each tabpage has its own
+     buffers
+   - **Key insight:** `nvim_create_namespace()` is idempotent (same name = same
+     ID globally)
+   - **Clearing extmarks:** Use
+     `vim.api.nvim_buf_clear_namespace(bufnr, ns_id, start_line, end_line)`
+   - **Pattern:** Module-level namespace constants are fine - isolation comes
+     from buffer separation
+   - **Example:**
+
+     ```lua
+     -- Module level (shared namespace ID is OK)
+     local NS_ANIMATION = vim.api.nvim_create_namespace("agentic_animation")
+
+     -- Instance level (each instance has its own buffer)
+     function Animation:new(bufnr)
+         return { bufnr = bufnr }
+     end
+
+     -- Operations are buffer-specific using module-level namespace
+     vim.api.nvim_buf_set_extmark(self.bufnr, NS_ANIMATION, ...)
+     vim.api.nvim_buf_clear_namespace(self.bufnr, NS_ANIMATION, 0, -1)
+     ```
+
+3. **Highlight groups are GLOBAL** (shared across all tabpages)
+   - ✅ `vim.api.nvim_set_hl(0, "AgenticTitle", {...})` - Defined once in
+     `lua/agentic/theme.lua`
+   - Highlight groups apply globally to all buffers/windows/tabpages
+   - Theme setup runs once during plugin initialization
+   - Use namespaces to control WHERE highlights appear, not to isolate highlight
+     definitions
+
+4. **Get tabpage ID correctly**
+   - In instance methods with `self.tabpage`: `self.tabpage`
+   - From buffer: `vim.api.nvim_win_get_tabpage(vim.fn.bufwinid(bufnr))`
+   - Current tabpage: `vim.api.nvim_get_current_tabpage()`
+
+5. **ACP sessions are per-tabpage**
+   - Each tabpage gets its own session ID from the shared ACP provider
+   - Session state tracked independently per tabpage
+   - Never mix session IDs between tabpages
+
+6. **Buffers/windows are tabpage-specific**
+   - Each tabpage manages its own buffers and windows
+   - Never assume buffer/window exists globally
+   - Use `vim.api.nvim_tabpage_*` APIs when needed
+
+7. **Autocommands must be tabpage-aware**
+   - Prefer buffer-local: `vim.api.nvim_create_autocmd(..., { buffer = bufnr })`
+   - Filter by tabpage in global autocommands if necessary
+
+8. **Keymaps must be buffer-local**
+   - Always use: `BufHelpers.keymap_set(bufnr, "n", "key", fn)`
+   - NEVER use global keymaps that affect all tabpages
+
+### Testing Multi-Tab Isolation
+
+Before submitting changes, verify isolation:
+
+```vim
+:tabnew          " Create second tabpage
+:AgenticChat     " Start chat in tab 2
+:tabprev         " Go back to tab 1
+:AgenticChat     " Start chat in tab 1
+" Both chats must work independently - no cross-contamination
+" Verify: animations, highlights, sessions, namespaces all isolated
+```
+
+### Class Design Guidelines
+
+When creating or modifying classes:
+
+1. **Minimize class properties** - Only include properties that:
+   - Are accessed by external code (other modules/classes)
+   - Are part of the public API
+   - Need to be accessed by subclasses or mixins
+
+2. **Prefer private fields over unnecessary public properties** - Mark internal
+   state with `_` prefix and `@private` annotation. Only expose what external
+   code needs to access.
+
+   ```lua
+   -- ❌ Bad: Unnecessary public property
+   --- @class MyClass
+   --- @field counter number  -- Exposed to external code unnecessarily
+   local MyClass = {}
+   MyClass.__index = MyClass
+
+   function MyClass:new()
+       return setmetatable({ counter = 0 }, self)
+   end
+
+   function MyClass:increment()
+       self.counter = self.counter + 1
+   end
+
+   -- ✅ Good: Private internal state
+   --- @class MyClass
+   --- @field _counter number  -- Internal implementation detail
+   --- @private
+   local MyClass = {}
+   MyClass.__index = MyClass
+
+   function MyClass:new()
+       return setmetatable({ _counter = 0 }, self)
+   end
+
+   function MyClass:increment()
+       self._counter = self._counter + 1
+   end
+
+   function MyClass:get_count()
+       return self._counter  -- Controlled access if needed
+   end
+   ```
+
+3. **Document intent with LuaCATS** - Use `@private` or `@package` annotations
+   for fields that are implementation details:
+
+   ```lua
+   --- @class MyClass
+   --- @field public_field string Public API field
+   --- @field _private_field number Private implementation detail
+   ```
+
+   **Note:** Lua Language Server is configured to treat `_*` prefixed properties
+   as private and will not show them in autocomplete for external consumers.
+
+4. **Regular cleanup** - When adding new code, review class definitions and
+   remove:
+   - Unused properties
+   - Properties that were needed during development but are no longer used
+   - Properties that could be local variables instead
+
+## Code Style
+
+### LuaCATS Annotations
+
+Use consistent formatting for LuaCATS annotations with a space after `---`:
+
+```lua
+--- Brief description of the class
+--- @class MyClass
+--- @field public_field string Public API field
+--- @field _private_field number Private implementation detail
+local MyClass = {}
+MyClass.__index = MyClass
+
+--- Creates a new instance of MyClass
+--- @param name string The name parameter
+--- @param options? table Optional configuration table
+--- @return MyClass instance The created instance
+function MyClass:new(name, options)
+    return setmetatable({ public_field = name }, self)
+end
+
+--- Performs an operation and returns success status
+--- @return boolean success Whether the operation succeeded
+function MyClass:do_something()
+    return true
+end
+```
+
+**Guidelines:**
+
+- Always include a space after `---` for both descriptions and annotations
+- Use `@private` or `@package` for internal implementation details
+- Mark optional parameters with `?` suffix (e.g., `name? string`)
+- Do NOT Provide meaningful parameter and return descriptions, unless requested
+- Group related annotations together (class fields, function params, returns)
+
 ## Development & Linting
 
 Quick syntax check:
@@ -19,9 +225,9 @@ luac -p lua/agentic/init.lua lua/agentic/ui.lua # Multiple files
 luac -p lua/agentic/*.lua                       # Using glob patterns
 ```
 
-Or with Make for running Lua linting and type checking tools:
-
 ### Available Make targets:
+
+Make for running Lua linting and type checking tools:
 
 - `make luals` - Run Lua Language Server headless diagnosis (type checking)
 - `make luacheck` - Run Luacheck linter (style and syntax checking)
@@ -37,7 +243,39 @@ make LUALS=/path/to/lua-language-server luals
 make LUACHECK=/path/to/luacheck luacheck
 ```
 
-**Note:** The `lua/agentic/acp/acp_client.lua` file contains critical type annotations for Lua Language Server support. These annotations should **never** be removed, only updated when the underlying types change.
+**Note:** The `lua/agentic/acp/acp_client.lua` file contains critical type
+annotations for Lua Language Server support. These annotations should **never**
+be removed, only updated when the underlying types change.
+
+### Configuration & User Documentation
+
+#### Config File Changes
+
+The `lua/agentic/config_default.lua` file defines all user-configurable options.
+
+**IMPORTANT:** When adding or refactoring configuration options:
+
+1. Add/update the configuration in `config_default.lua` with proper LuaCATS type
+   annotations
+2. **ALWAYS update the README.md** "Configuration" section:
+   - Include default values
+   - Update the configuration table if one exists
+
+#### Theme & Highlight Groups
+
+The `lua/agentic/theme.lua` file defines all custom highlight groups used by the
+plugin.
+
+**IMPORTANT:** When adding new highlight groups:
+
+1. Add the highlight group name to `Theme.HL_GROUPS` constant
+2. Define the default highlight in `Theme.setup()` function
+3. **Update the README.md** "Customization (Ricing)" section with:
+   - The new highlight group in the code example
+   - A new row in the "Available Highlight Groups" table
+
+These documentation updates ensure users can discover and customize all aspects
+of the plugin.
 
 ### Provider System
 
@@ -103,4 +341,3 @@ official docs:
   https://raw.githubusercontent.com/neovim/neovim/refs/tags/v0.11.5/runtime/doc/diagnostic.txt
 
 Don't be limited to these docs, explore more as needed.
-

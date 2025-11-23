@@ -4,6 +4,7 @@
 -- When the user switches the provider, the SessionManager should handle the transition smoothly,
 -- ensuring that the new session is properly set up and all the previous messages are sent to the new agent provider without duplicating them in the chat widget
 
+local BufHelpers = require("agentic.utils.buf_helpers")
 local Logger = require("agentic.utils.logger")
 local FileSystem = require("agentic.utils.file_system")
 
@@ -16,6 +17,7 @@ local P = {}
 ---@field agent agentic.acp.ACPClient
 ---@field message_writer agentic.ui.MessageWriter
 ---@field permission_manager agentic.ui.PermissionManager
+---@field status_animation agentic.ui.StatusAnimation
 ---@field current_provider string
 ---@field selected_files string[]
 ---@field code_selections agentic.Selection[]
@@ -28,6 +30,7 @@ function SessionManager:new(tab_page_id)
     local ChatWidget = require("agentic.ui.chat_widget")
     local MessageWriter = require("agentic.ui.message_writer")
     local PermissionManager = require("agentic.ui.permission_manager")
+    local StatusAnimation = require("agentic.ui.status_animation")
 
     local instance = setmetatable({
         session_id = nil,
@@ -53,10 +56,10 @@ function SessionManager:new(tab_page_id)
 
     instance.message_writer = MessageWriter:new(instance.widget.buf_nrs.chat)
 
-    instance.permission_manager = PermissionManager:new(
-        instance.widget.buf_nrs.chat,
-        instance.message_writer
-    )
+    instance.status_animation =
+        StatusAnimation:new(instance.widget.buf_nrs.chat)
+
+    instance.permission_manager = PermissionManager:new(instance.message_writer)
 
     instance:_new_session()
 
@@ -71,6 +74,7 @@ function SessionManager:_on_session_update(update)
         -- FIXIT: implement plan handling
         Logger.debug("Implement plan handling")
     elseif update.sessionUpdate == "agent_message_chunk" then
+        self.status_animation:start("generating")
         self.message_writer:write_message(update)
     elseif update.sessionUpdate == "user_message_chunk" then
         self.message_writer:write_message(update)
@@ -85,6 +89,13 @@ function SessionManager:_on_session_update(update)
             self.permission_manager:remove_request_by_tool_call_id(
                 update.toolCallId
             )
+
+            if
+                not self.permission_manager.current_request
+                and #self.permission_manager.queue == 0
+            then
+                self.status_animation:start("generating")
+            end
         end
     elseif update.sessionUpdate == "available_commands_update" then
         -- FIXIT: implement available slash commands handling
@@ -212,17 +223,25 @@ function SessionManager:_handle_input_submit(input_text)
         self.agent:generate_user_message(message_lines)
     )
 
-    self.agent:send_prompt(self.session_id, prompt, function(_response, err)
-        if err then
-            vim.notify("Error submitting prompt: " .. vim.inspect(err))
-            return
-        end
+    self.status_animation:start("thinking")
 
+    self.agent:send_prompt(self.session_id, prompt, function(_response, err)
         vim.schedule(function()
+            self.status_animation:stop()
+
             local finish_message = string.format(
                 "### 🏁 %s\n-----",
                 os.date("%Y-%m-%d %H:%M:%S")
             )
+
+            if err then
+                finish_message = string.format(
+                    "### ❌ Agent finished with error: %s\n%s",
+                    vim.inspect(err),
+                    finish_message
+                )
+            end
+
             self.message_writer:write_message(
                 self.agent:generate_agent_message(finish_message)
             )
@@ -259,7 +278,20 @@ function SessionManager:_new_session()
         end,
 
         on_request_permission = function(request, callback)
-            self.permission_manager:add_request(request, callback)
+            self.status_animation:stop()
+
+            local wrapped_callback = function(option_id)
+                callback(option_id)
+
+                if
+                    not self.permission_manager.current_request
+                    and #self.permission_manager.queue == 0
+                then
+                    self.status_animation:start("generating")
+                end
+            end
+
+            self.permission_manager:add_request(request, wrapped_callback)
         end,
     }
 
@@ -284,7 +316,7 @@ function SessionManager:_new_session()
             local provider_name = self.current_provider or "unknown"
             local session_id = self.session_id or "unknown"
             local welcome_message = string.format(
-                "# Agentic - %s - %s\n- %s\n- ACP\n-----",
+                "# Agentic - %s - %s\n- %s\n-----",
                 provider_name,
                 session_id,
                 timestamp
@@ -417,7 +449,7 @@ function P.on_write_file(abs_path, content, callback)
 
         if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
             pcall(function()
-                vim.api.nvim_buf_call(bufnr, function()
+                BufHelpers.execute_on_buffer(bufnr, function()
                     local view = vim.fn.winsaveview()
                     vim.cmd("checktime")
                     vim.fn.winrestview(view)
