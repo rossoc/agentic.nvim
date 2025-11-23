@@ -5,51 +5,33 @@
 **Agentic.nvim** brings your AI assistant to Neovim through the implementation
 of the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 
-You should get the same results and performance as you would when using the ACP
+You'll get the same results and performance as you would when using the ACP
 provider's official CLI directly from the terminal.
 
-There's no hidden prompts, or magic happening behind the scenes. Just the chat
-sidebar and your colors, and your keymaps.
+There're no hidden prompts or magic happening behind the scenes. Just a chat
+interface, your colors, and your keymaps.
 
 You don't have to leave Neovim, so more time in the
-[Flow](<https://en.wikipedia.org/wiki/Flow_(psychology)>) state, and less
-context switching.
-
+[Flow](<https://en.wikipedia.org/wiki/Flow_(psychology)>) state and less context
+switching, and less new tools and keymaps to learn.
 
 https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
-
 
 ## ✨ Features
 
 - **⚡ Performance First** - Optimized for minimal overhead and fast response
   times
-- **🔌 Multiple ACP Providers** - Support for Claude, Gemini, Codex, and
-  OpenCode, and any other ACP-compliant provider
+- **🔌 Multiple ACP Providers** - Support for Claude, Gemini, Codex, OpenCode,
+  and any other ACP-compliant provider
 - **📝 Context Control** - Add files and text selections to conversation context
   with one keypress
 - **🛡️ Permission System** - Interactive approval workflow for AI tool calls,
-  mimicking Claude-code's approach, with 1, 2, 3, ... key bindings for quick
+  mimicking Claude-code's approach, with 1, 2, 3, ... one-key press for quick
   responses
-- **📂 Per-Tab Sessions** - Independent chat sessions for each Neovim tab allows
-  yout to have multiple Agents working simultaneously
+- **📂 Multiple agents** - Independent chat sessions for each Neovim Tab lets
+  you have multiple agents working simultaneously on different tasks
 - **🎯 Clean UI** - Sidebar interface with markdown rendering and syntax
   highlighting
-
-## 📋 Requirements
-
-- **Neovim** v0.11.0 or higher
-- **ACP Provider CLI** - At least one installed:
-
-| Provider                           | Install                                                                                                                                 |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [claude-code-acp][claude-code-acp] | `npm i -g @zed-industries/claude-code-acp`<br/>`brew install --cask claude-code`<br/> `curl -fsSL https://claude.ai/install.sh \| bash` |
-| [gemini-cli][gemini-cli]           | `npm i -g @google/gemini-cli`<br/>`brew install --cask gemini`                                                                          |
-| [codex-acp][codex-acp]             | `npm i -g @zed-industries/codex-acp`<br/>`brew install --cask codex`<br/>[Download binary][codex-acp-releases]                          |
-| [opencode][opencode]               | `npm i -g opencode-ai`<br/>`brew install opencode`<br/>`curl -fsSL https://opencode.ai/install \| bash`                                 |
-
-**⚠️ NOTE:** these install commands are here for convenience, please always
-refer to the official installation instructions from the respective ACP
-provider.
 
 ## 📦 Installation
 
@@ -97,7 +79,7 @@ provider.
 
 ## ⚙️ Configuration
 
-You don't have to copy and paste it, just here for reference:
+You don't have to copy and paste it, it's just here for reference:
 
 Click to expand:
 
@@ -152,9 +134,9 @@ require("agentic").setup({
   },
 
   windows = {
-    width = "40%", -- can be number (cols) or string (% of total width), or float (0.1 - 1.0)
+    width = "40%", -- can be number (cols), string (% of total width), or float (0.1 - 1.0)
     input = {
-      height = 10, -- the height, in lines, of the prompt input area
+      height = 10, -- height in lines of the prompt input area
     },
   },
 
@@ -181,6 +163,22 @@ require("agentic").setup({
 ```
 
 </details>
+
+## 📋 Requirements
+
+- **Neovim** v0.11.0 or higher
+- **ACP Provider CLI** - Chose your favorite ACP and install its CLI tool
+
+| Provider                           | Install                                                                                                                                 |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| [claude-code-acp][claude-code-acp] | `npm i -g @zed-industries/claude-code-acp`<br/>`brew install --cask claude-code`<br/> `curl -fsSL https://claude.ai/install.sh \| bash` |
+| [gemini-cli][gemini-cli]           | `npm i -g @google/gemini-cli`<br/>`brew install --cask gemini`                                                                          |
+| [codex-acp][codex-acp]             | `npm i -g @zed-industries/codex-acp`<br/>`brew install --cask codex`<br/>[Download binary][codex-acp-releases]                          |
+| [opencode][opencode]               | `npm i -g opencode-ai`<br/>`brew install opencode`<br/>`curl -fsSL https://opencode.ai/install \| bash`                                 |
+
+> [!WARNING] These install commands are here for convenience — please always
+> refer to the official installation instructions from the respective ACP
+> provider.
 
 ## 🚀 Usage (Public Lua API)
 
@@ -214,6 +212,9 @@ colorscheme.
 | `AgenticStatusFailed`    | Failed tool call status indicator        | `bg=#7a2d2d`                        |
 | `AgenticCodeBlockFence`  | The left border decoration on tool calls | Links to `Directory`                |
 | `AgenticTitle`           | Window titles in sidebar                 | `bg=#2787b0, fg=#000000, bold=true` |
+
+If any of these highlight exists, Agentic will use it instead of creating new
+ones.
 
 ## Integration with Lualine
 
@@ -258,11 +259,12 @@ View messages exchanged with the ACP provider in the log file at:
 ## 📚 Resources
 
 - [Agent Client Protocol Documentation](https://agentclientprotocol.com)
-- [ACP Schema](https://agentclientprotocol.com/protocol/schema.md)
 
 ## 📄 License
 
-[MIT License](LICENSE.txt)
+[MIT License](LICENSE.txt)  
+Feel free to copy, modify, and distribute, just be a good samaritan and include
+the the acknowledgments 😊.
 
 ## 🙏 Acknowledgments
 
