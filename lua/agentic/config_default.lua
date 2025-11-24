@@ -8,7 +8,7 @@ local ConfigDefault = {
     --- @type agentic.UserConfig.ProviderName
     provider = "claude-acp",
 
-    --- @type table<agentic.UserConfig.ProviderName, agentic.acp.ACPProviderConfig>
+    --- @type table<agentic.UserConfig.ProviderName, agentic.acp.ACPProviderConfig|nil>
     acp_providers = {
         ["claude-acp"] = {
             name = "Claude ACP",

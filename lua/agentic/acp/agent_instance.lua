@@ -5,45 +5,53 @@
 -- Documentation for reference: https://agentclientprotocol.com/protocol/session-setup.md
 
 local Config = require("agentic.config")
+local Logger = require("agentic.utils.logger")
 
----@class agentic.acp.AgentInstance
----@field chat_widget agentic.ui.ChatWidget
----@field agent_client agentic.acp.ACPClient
+--- @class agentic.acp.AgentInstance
+--- @field chat_widget agentic.ui.ChatWidget
+--- @field agent_client agentic.acp.ACPClient
 
 ---@class agentic.acp.AgentInstance
 local AgentInstance = {}
 
 --- A Keyed list of agent instances by name
----@type table<string, agentic.acp.ACPClient>
-AgentInstance.instances = {}
+--- @private
+--- @type table<string, agentic.acp.ACPClient|nil>
+AgentInstance._instances = {}
 
 ---@param provider_name string
 function AgentInstance.get_instance(provider_name)
     local Client = require("agentic.acp.acp_client")
 
-    if AgentInstance.instances[provider_name] ~= nil then
-        return AgentInstance.instances[provider_name]
+    local client = AgentInstance._instances[provider_name]
+
+    if client then
+        return client
     end
 
-    local provider_config = Config.acp_providers[provider_name]
+    local config = Config.acp_providers[provider_name]
 
-    if not provider_config then
+    if not config then
         error("No ACP provider configuration found for: " .. provider_name)
         return nil
     end
 
-    local agent_client = Client:new(provider_config)
+    Logger.debug(
+        "Creating new ACP agent instance for provider: " .. provider_name
+    )
 
-    AgentInstance.instances[provider_name] = agent_client
+    client = Client:new(config)
 
-    return agent_client
+    AgentInstance._instances[provider_name] = client
+
+    return client
 end
 
----Cleanup all active instances and processes
----This is called automatically on VimLeavePre and signal handlers
----Can also be called manually if needed
+--- Cleanup all active instances and processes
+--- This is called automatically on VimLeavePre and signal handlers
+--- Can also be called manually if needed
 function AgentInstance:cleanup_all()
-    for _name, instance in pairs(self.instances) do
+    for _name, instance in pairs(self._instances) do
         if instance then
             pcall(function()
                 instance:stop()
@@ -51,7 +59,7 @@ function AgentInstance:cleanup_all()
         end
     end
 
-    self.instances = {}
+    self._instances = {}
 end
 
 return AgentInstance

@@ -44,6 +44,7 @@ local function format_debug_message(...)
     return log_parts
 end
 
+--- Print a debug message that can be read by `:messages`
 function Logger.debug(...)
     local formatted_message = format_debug_message(...)
 
@@ -52,6 +53,8 @@ function Logger.debug(...)
     end
 end
 
+--- Append a debug message to a log file in the cache directory
+--- Usually at `~/.cache/nvim/agentic_debug.log` on Mac/Linux
 function Logger.debug_to_file(...)
     local log_parts = format_debug_message(...)
     if not log_parts then
