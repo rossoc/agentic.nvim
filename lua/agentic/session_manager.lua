@@ -8,22 +8,22 @@ local BufHelpers = require("agentic.utils.buf_helpers")
 local Logger = require("agentic.utils.logger")
 local FileSystem = require("agentic.utils.file_system")
 
----@class agentic._SessionManagerPrivate
+--- @class agentic._SessionManagerPrivate
 local P = {}
 
----@class agentic.SessionManager
----@field session_id string|nil
----@field widget agentic.ui.ChatWidget
----@field agent agentic.acp.ACPClient
----@field message_writer agentic.ui.MessageWriter
----@field permission_manager agentic.ui.PermissionManager
----@field status_animation agentic.ui.StatusAnimation
----@field current_provider string
----@field selected_files string[]
----@field code_selections agentic.Selection[]
+--- @class agentic.SessionManager
+--- @field session_id string|nil
+--- @field widget agentic.ui.ChatWidget
+--- @field agent agentic.acp.ACPClient
+--- @field message_writer agentic.ui.MessageWriter
+--- @field permission_manager agentic.ui.PermissionManager
+--- @field status_animation agentic.ui.StatusAnimation
+--- @field current_provider string
+--- @field selected_files string[]
+--- @field code_selections agentic.Selection[]
 local SessionManager = {}
 
----@param tab_page_id integer
+--- @param tab_page_id integer
 function SessionManager:new(tab_page_id)
     local AgentInstance = require("agentic.acp.agent_instance")
     local Config = require("agentic.config")
@@ -50,7 +50,7 @@ function SessionManager:new(tab_page_id)
     instance.agent = agent
 
     instance.widget = ChatWidget:new(tab_page_id, function(input_text)
-        ---@diagnostic disable-next-line: invisible
+        --- @diagnostic disable-next-line: invisible
         instance:_handle_input_submit(input_text)
     end)
 
@@ -66,7 +66,7 @@ function SessionManager:new(tab_page_id)
     return instance
 end
 
----@param update agentic.acp.SessionUpdateMessage
+--- @param update agentic.acp.SessionUpdateMessage
 function SessionManager:_on_session_update(update)
     -- order the IF blocks in order of likeliness to be called for performance
 
@@ -105,7 +105,7 @@ function SessionManager:_on_session_update(update)
         vim.notify(
             "Unknown session update type: "
                 .. tostring(
-                    ---@diagnostic disable-next-line: undefined-field -- expected it to be unknown
+                    --- @diagnostic disable-next-line: undefined-field -- expected it to be unknown
                     update.sessionUpdate
                 ),
             vim.log.levels.WARN,
@@ -230,7 +230,7 @@ function SessionManager:_handle_input_submit(input_text)
             self.status_animation:stop()
 
             local finish_message = string.format(
-                "### 🏁 %s\n-----",
+                "### 🏁 %s\n--- --",
                 os.date("%Y-%m-%d %H:%M:%S")
             )
 
@@ -251,7 +251,7 @@ end
 
 function SessionManager:_new_session()
     self:_cancel_session()
-    ---@type agentic.acp.ClientHandlers
+    --- @type agentic.acp.ClientHandlers
     local handlers = {
         on_error = function(err)
             Logger.debug("Agent error: ", err)
@@ -316,7 +316,7 @@ function SessionManager:_new_session()
             local provider_name = self.current_provider or "unknown"
             local session_id = self.session_id or "unknown"
             local welcome_message = string.format(
-                "# Agentic - %s - %s\n- %s\n-----",
+                "# Agentic - %s - %s\n- %s\n--- --",
                 provider_name,
                 session_id,
                 timestamp
@@ -392,6 +392,11 @@ function SessionManager:_get_selected_text()
         local start_line = start_pos[2]
         local end_line = end_pos[2]
 
+        -- Ensure start_line is always smaller than end_line (handle backward selection)
+        if start_line > end_line then
+            start_line, end_line = end_line, start_line
+        end
+
         local lines = vim.api.nvim_buf_get_lines(
             0,
             start_line - 1, -- 0-indexed
@@ -404,7 +409,7 @@ function SessionManager:_get_selected_text()
             vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
         vim.api.nvim_feedkeys(esc_key, "nx", false)
 
-        ---@class agentic.Selection
+        --- @class agentic.Selection
         local selection = {
             lines = lines,
             start_line = start_line,
@@ -417,7 +422,7 @@ function SessionManager:_get_selected_text()
     end
 end
 
----@type agentic.acp.ClientHandlers.on_read_file
+--- @type agentic.acp.ClientHandlers.on_read_file
 function P.on_read_file(abs_path, line, limit, callback)
     local lines, err = FileSystem.read_from_buffer_or_disk(abs_path)
     lines = lines or {}
@@ -440,7 +445,7 @@ function P.on_read_file(abs_path, line, limit, callback)
     callback(content)
 end
 
----@type agentic.acp.ClientHandlers.on_write_file
+--- @type agentic.acp.ClientHandlers.on_write_file
 function P.on_write_file(abs_path, content, callback)
     local saved = FileSystem.save_to_disk(abs_path, content)
 
