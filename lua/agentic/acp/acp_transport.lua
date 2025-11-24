@@ -18,6 +18,17 @@ local M = {}
 ---@field enable_reconnect? boolean Enable auto-reconnect
 ---@field max_reconnect_attempts? number Maximum reconnection attempts
 
+--- Some known messages the ACP providers write to stderr because it communicates via stdio
+--- These can be safely ignored, as they aren't errors, but logs
+local IGNORE_STDERR_PATTERNS = {
+    "Session not found",
+    "session/prompt",
+    "Spawning Claude Code process",
+    "does not appear in the file:",
+    "Experiments loaded", -- from Gemini
+    "No onPostToolUseHook found", -- from Claude
+}
+
 ---Create stdio transport for ACP communication
 ---@param config agentic.acp.StdioTransportConfig
 ---@param callbacks agentic.acp.TransportCallbacks
@@ -155,18 +166,15 @@ function M.create_stdio_transport(config, callbacks)
 
         stderr:read_start(function(_, data)
             if data then
-                if
-                    not (
-                        data:match("Session not found")
-                        or data:match("session/prompt")
-                        or data:match("Spawning Claude Code process")
-                        or data:match("does not appear in the file:")
-                    )
-                then
-                    vim.schedule(function()
-                        logger.debug("ACP stderr: ", data)
-                    end)
+                for _, pattern in ipairs(IGNORE_STDERR_PATTERNS) do
+                    if data:match(pattern) then
+                        return
+                    end
                 end
+
+                vim.schedule(function()
+                    logger.debug("ACP stderr: ", data)
+                end)
             end
         end)
     end
