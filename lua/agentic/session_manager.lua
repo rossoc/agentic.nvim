@@ -13,6 +13,7 @@ local P = {}
 
 --- @class agentic.SessionManager
 --- @field session_id string|nil
+--- @field _is_first_message boolean Whether this is the first message in the session, used to add system info only once
 --- @field widget agentic.ui.ChatWidget
 --- @field agent agentic.acp.ACPClient
 --- @field message_writer agentic.ui.MessageWriter
@@ -39,6 +40,7 @@ function SessionManager:new(tab_page_id)
 
     local instance = setmetatable({
         session_id = nil,
+        _is_first_message = true,
         current_provider = Config.provider,
     }, self)
 
@@ -158,12 +160,22 @@ function SessionManager:_handle_input_submit(input_text)
     end
 
     --- @type agentic.acp.Content[]
-    local prompt = {
-        {
+    local prompt = {}
+
+    -- Add system info on first message only
+    if self._is_first_message then
+        self._is_first_message = false
+
+        table.insert(prompt, {
             type = "text",
-            text = input_text,
-        },
-    }
+            text = self:_get_system_info(),
+        })
+    end
+
+    table.insert(prompt, {
+        type = "text",
+        text = input_text,
+    })
 
     --- The message to be written to the chat widget
     local message_lines = {
@@ -361,6 +373,9 @@ function SessionManager:new_session()
 
         self.session_id = response.sessionId
 
+        -- Reset first message flag for new session, so system info is added again for this session
+        self._is_first_message = true
+
         -- Add initial welcome message after session is created
         -- Defer to avoid fast event context issues
         vim.schedule(function()
@@ -466,6 +481,70 @@ function P.on_write_file(abs_path, content, callback)
     end
 
     callback("Failed to write file: " .. abs_path)
+end
+
+function SessionManager:_get_system_info()
+    local os_name = vim.uv.os_uname().sysname
+    local os_version = vim.uv.os_uname().release
+    local os_machine = vim.uv.os_uname().machine
+    local shell = os.getenv("SHELL")
+    local neovim_version = tostring(vim.version())
+    local today = os.date("%Y-%m-%d")
+
+    local res = string.format(
+        [[
+- Platform: %s-%s-%s
+- Shell: %s
+- Editor: Neovim %s
+- Current date: %s]],
+        os_name,
+        os_version,
+        os_machine,
+        shell,
+        neovim_version,
+        today
+    )
+
+    local project_root = vim.uv.cwd()
+
+    local git_root = vim.fs.root(project_root or 0, ".git")
+    if git_root then
+        project_root = git_root
+        res = res .. "\n- This is a Git repository."
+
+        local branch =
+            vim.fn.system("git rev-parse --abbrev-ref HEAD"):gsub("\n", "")
+        if vim.v.shell_error == 0 and branch ~= "" then
+            res = res .. string.format("\n- Current branch: %s", branch)
+        end
+
+        local changed = vim.fn.system("git status --porcelain"):gsub("\n$", "")
+        if vim.v.shell_error == 0 and changed ~= "" then
+            local files = vim.split(changed, "\n")
+            res = res .. "\n- Changed files:"
+            for _, file in ipairs(files) do
+                res = res .. "\n  - " .. file
+            end
+        end
+
+        local commits = vim.fn
+            .system("git log -3 --oneline --format='%h (%ar) %an: %s'")
+            :gsub("\n$", "")
+        if vim.v.shell_error == 0 and commits ~= "" then
+            local commit_lines = vim.split(commits, "\n")
+            res = res .. "\n- Recent commits:"
+            for _, commit in ipairs(commit_lines) do
+                res = res .. "\n  - " .. commit
+            end
+        end
+    end
+
+    if project_root then
+        res = res .. string.format("\n- Project root: %s", project_root)
+    end
+
+    res = "<environment_info>\n" .. res .. "\n</environment_info>"
+    return res
 end
 
 function SessionManager:destroy()
