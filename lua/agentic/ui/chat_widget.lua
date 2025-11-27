@@ -1,5 +1,4 @@
 local Config = require("agentic.config")
-local FileSystem = require("agentic.utils.file_system")
 local BufHelpers = require("agentic.utils.buf_helpers")
 local Logger = require("agentic.utils.logger")
 local WindowDecoration = require("agentic.ui.window_decoration")
@@ -13,7 +12,7 @@ local WindowDecoration = require("agentic.ui.window_decoration")
 local WINDOW_HEADERS = {
     chat = { title = "󰻞 Agentic Chat" },
     input = { title = "󰦨 Prompt", suffix = "| <C-s>: submit" },
-    code = { title = "󰪸 Selected Code Snippets" },
+    code = { title = "󰪸 Selected Code Snippets | d: remove block" },
     files = {
         title = " Referenced Files",
         suffix = function(self)
@@ -25,7 +24,7 @@ local WINDOW_HEADERS = {
                     file_count = file_count + 1
                 end
             end
-            return string.format("(%d)", file_count)
+            return string.format("(%d) | d: remove file", file_count)
         end,
     },
 }
@@ -70,9 +69,10 @@ function ChatWidget:show()
             width = self._calculate_width(Config.windows.width),
         }, {
             winfixheight = false,
-            scrolloff = 4,  -- Keep 4 lines visible above/below cursor (keeps animation visible)
+            scrolloff = 4, -- Keep 4 lines visible above/below cursor (keeps animation visible)
         })
-        self:_render_header("chat")
+
+        self:render_header("chat")
     end
 
     if
@@ -85,7 +85,8 @@ function ChatWidget:show()
             height = Config.windows.input.height,
             fixed = true,
         }, {})
-        self:_render_header("input")
+
+        self:render_header("input")
     end
 
     if
@@ -99,7 +100,8 @@ function ChatWidget:show()
             split = "below",
             height = 15,
         }, {})
-        self:_render_header("code")
+
+        self:render_header("code")
     end
 
     if
@@ -113,10 +115,11 @@ function ChatWidget:show()
             split = "above",
             height = 5,
         }, {})
-        self:_render_header("files")
+
+        self:render_header("files")
     end
 
-    self:_move_cursor_to(
+    self:move_cursor_to(
         self.win_nrs.input,
         BufHelpers.start_insert_on_last_char
     )
@@ -180,49 +183,6 @@ function ChatWidget:destroy()
     end
 end
 
---- @param selections agentic.Selection[]
-function ChatWidget:render_code_selection(selections)
-    --- @type string[]
-    local text_block = {}
-
-    for _, selection in ipairs(selections) do
-        if selection and #selection.lines > 0 then
-            table.insert(
-                text_block,
-                string.format(
-                    "```%s %s:%d-%d",
-                    selection.file_type,
-                    selection.file_path,
-                    selection.start_line,
-                    selection.end_line
-                )
-            )
-
-            vim.list_extend(text_block, selection.lines)
-
-            table.insert(text_block, "```")
-            table.insert(text_block, "")
-        end
-    end
-
-    BufHelpers.with_modifiable(self.buf_nrs.code, function(bufnr)
-        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, text_block)
-    end)
-end
-
---- @param selected_files string[]
-function ChatWidget:render_selected_files(selected_files)
-    local lines = {}
-
-    for _, file in ipairs(selected_files) do
-        table.insert(lines, "-  " .. FileSystem.to_smart_path(file))
-    end
-
-    BufHelpers.with_modifiable(self.buf_nrs.files, function(bufnr)
-        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    end)
-end
-
 function ChatWidget:_submit_input()
     vim.cmd("stopinsert")
 
@@ -251,25 +211,20 @@ function ChatWidget:_submit_input()
 
     self.on_submit_input(prompt)
 
-    if self.win_nrs.code and vim.api.nvim_win_is_valid(self.win_nrs.code) then
-        vim.api.nvim_win_close(self.win_nrs.code, true)
-        self.win_nrs.code = nil
-    end
-    if self.win_nrs.files and vim.api.nvim_win_is_valid(self.win_nrs.files) then
-        vim.api.nvim_win_close(self.win_nrs.files, true)
-        self.win_nrs.files = nil
-    end
+    self:close_code_window()
+    self:close_files_window()
 
     -- Move cursor to chat buffer after submit for easy access to permission requests
-    self:_move_cursor_to(self.win_nrs.chat)
+    self:move_cursor_to(self.win_nrs.chat)
 end
 
 --- @param winid? integer
 --- @param callback? fun()
-function ChatWidget:_move_cursor_to(winid, callback)
+function ChatWidget:move_cursor_to(winid, callback)
     vim.schedule(function()
         if winid and vim.api.nvim_win_is_valid(winid) then
             vim.api.nvim_set_current_win(winid)
+            vim.cmd("normal! G0zb")
             if callback then
                 callback()
             end
@@ -298,7 +253,7 @@ function ChatWidget:_initialize()
     -- Add keybindings to chat buffer to jump back to input and start insert mode
     for _, key in ipairs({ "a", "A", "o", "O", "i", "I", "c", "C" }) do
         BufHelpers.keymap_set(buf_nrs.chat, "n", key, function()
-            self:_move_cursor_to(
+            self:move_cursor_to(
                 self.win_nrs.input,
                 BufHelpers.start_insert_on_last_char
             )
@@ -449,7 +404,7 @@ function ChatWidget._calculate_width(size)
 end
 
 --- @param window_name agentic.ui.ChatWidget.PanelNames
-function ChatWidget:_render_header(window_name)
+function ChatWidget:render_header(window_name)
     local winid = self.win_nrs[window_name]
     if not winid then
         return
@@ -471,6 +426,20 @@ function ChatWidget:_render_header(window_name)
     end
 
     WindowDecoration.render_window_header(winid, opts)
+end
+
+function ChatWidget:close_code_window()
+    if self.win_nrs.code and vim.api.nvim_win_is_valid(self.win_nrs.code) then
+        vim.api.nvim_win_close(self.win_nrs.code, true)
+        self.win_nrs.code = nil
+    end
+end
+
+function ChatWidget:close_files_window()
+    if self.win_nrs.files and vim.api.nvim_win_is_valid(self.win_nrs.files) then
+        vim.api.nvim_win_close(self.win_nrs.files, true)
+        self.win_nrs.files = nil
+    end
 end
 
 return ChatWidget
