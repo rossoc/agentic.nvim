@@ -32,6 +32,16 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
   you have multiple agents working simultaneously on different tasks
 - **🎯 Clean UI** - Sidebar interface with markdown rendering and syntax
   highlighting
+- **⌨️ Slash Commands** - Native Neovim completion for ACP slash commands with
+  fuzzy filtering
+  - Every slash command your provider has access too will apear when you type
+    `/` in the prompt as the first character
+- **🔄 Agent Mode Switching** - Switch between ACP-supported agent modes with
+  Shift-Tab (Similar to Claude, Gemini, Cursor-agent, etc)
+  - `Default`, `Auto Accept`, `Plan mode`, etc... (depends on the provider)
+- **ℹ️ Smart Context** - Automatically includes system and project information
+  in the first message of each session, so the Agent don't spend time and tokens
+  gathering basic info
 
 ## 📦 Installation
 
@@ -181,6 +191,13 @@ require("agentic").setup({
 > These install commands are here for convenience, please always refer to the
 > official installation instructions from the respective ACP provider.
 
+> [!NOTE]  
+> Why install ACP provider CLIs globally?
+> [shai-hulud](https://www.wiz.io/blog/shai-hulud-2-0-ongoing-supply-chain-attack)
+> should be reason enough. Pin your versions!  
+> But frontend projects with strict package management policies will fail to
+> start when using `npx ...`
+
 ## 🚀 Usage (Public Lua API)
 
 ### Commands
@@ -194,6 +211,42 @@ require("agentic").setup({
 | `:lua require("agentic").add_file()`                         | Add current file to context                                     |
 | `:lua require("agentic").add_selection_or_file_to_context()` | Add selection (if any) or file to the context                   |
 | `:lua require("agentic").new_session()`                      | Start new chat session, destroying and cleaning the current one |
+
+### Built-in Keybindings
+
+These keybindings are automatically set in Agentic buffers:
+
+| Keybinding | Mode  | Description                                                   |
+| ---------- | ----- | ------------------------------------------------------------- |
+| `<S-Tab>`  | n/v/i | Switch agent mode (only available if provider supports modes) |
+| `d`        | n     | Remove file or code selection at cursor                       |
+| `d`        | v     | Remove multiple selected files or code selections             |
+
+### Slash Commands
+
+Type `/` in the Prompt buffer to see available slash commands with
+auto-completion.
+
+The `/new` command is always available to start a new session, other commands
+are provided by your ACP provider.
+
+### System Information
+
+Agentic automatically includes environment and project information in the first
+message of each session:
+
+- Platform information (OS, version, architecture)
+- Shell and Neovim version
+- Current date
+- Git repository status (if applicable):
+  - Current branch
+  - Changed files
+  - Recent commits (last 3)
+- Project root path
+
+This helps the AI Agent understand the context of the current project without
+having to run additional commands or grep through files, the goals is to reduce
+time for the first response.
 
 ## 🍚 Customization (Ricing)
 
@@ -283,3 +336,4 @@ the the acknowledgments 😊.
 [codex-acp]: https://github.com/zed-industries/codex-acp
 [codex-acp-releases]: https://github.com/zed-industries/codex-acp/releases
 [opencode]: https://github.com/sst/opencode
+
