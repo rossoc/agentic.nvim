@@ -86,6 +86,12 @@ function StatusAnimation:stop()
 end
 
 function StatusAnimation:_render_frame()
+    if not self._state then
+        -- return early to stop the animation in case state was cleared
+        -- this avoids an infinite loop of deferred calls without a state and it actually renders nil in the UI
+        return
+    end
+
     local spinner_chars = Config.spinner_chars[self._state]
         or Config.spinner_chars.generating
 
