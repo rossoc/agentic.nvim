@@ -8,14 +8,8 @@ of the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
 You'll get the same results and performance as you would when using the ACP
 provider's official CLI directly from the terminal.
 
-There're no hidden prompts or magic happening behind the scenes. Just a chat
+There're no hidden prompts or magic happening behind the scenes. Just a Chat
 interface, your colors, and your keymaps.
-
-You don't have to leave Neovim, so more time in the
-[Flow](<https://en.wikipedia.org/wiki/Flow_(psychology)>) state and less context
-switching, and less new tools and keymaps to learn.
-
-https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
 
 ## ✨ Features
 
@@ -32,7 +26,7 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
 - **🛡️ Permission System** - Interactive approval workflow for AI tool calls,
   mimicking Claude-code's approach, with 1, 2, 3, ... one-key press for quick
   responses
-- **📂 Multiple agents** - Independent chat sessions for each Neovim Tab lets
+- **🤖 🤖 Multiple agents** - Independent Chat sessions for each Neovim Tab let
   you have multiple agents working simultaneously on different tasks
 - **🎯 Clean UI** - Sidebar interface with markdown rendering and syntax
   highlighting
@@ -48,6 +42,24 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
 - **ℹ️ Smart Context** - Automatically includes system and project information
   in the first message of each session, so the Agent don't spend time and tokens
   gathering basic info
+
+## 🎥 Showcase
+
+### Simple replace with tool approval:
+
+https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
+
+### 🐣 NEW: Switch agent mode: Always ask, Accept Edits, Plan mode...
+
+https://github.com/user-attachments/assets/96a11aae-3095-46e7-86f1-ccc02d21c04f
+
+### Add files to the context:
+
+https://github.com/user-attachments/assets/b6b43544-a91e-407f-834e-4b4de41259f8
+
+### Use `@` to fuzzy find any file:
+
+https://github.com/user-attachments/assets/c6653a8b-20ef-49c8-b644-db0df1b342f0
 
 ## 📦 Installation
 
