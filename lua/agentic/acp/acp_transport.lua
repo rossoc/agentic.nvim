@@ -73,9 +73,30 @@ function M.create_stdio_transport(config, callbacks)
 
         local final_env = {}
 
-        local path = vim.fn.getenv("PATH")
-        if path then
-            final_env[#final_env + 1] = "PATH=" .. path
+        -- Essential environment variables for subprocess
+        -- PATH: Required for finding executables
+        -- HOME: Required for finding ~/.claude.json, or other auth credentials (ACP clients might not find `~` otherwise)
+        -- USER/LOGNAME: User identification
+        -- SHELL: Expected by some CLI tools
+        -- TMPDIR: Temporary file location
+        local essential_vars = {
+            "HOME",
+            "LANG",
+            "LOGNAME",
+            "PATH",
+            "SHELL",
+            "TMPDIR",
+            "USER",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+        }
+        for _, var in ipairs(essential_vars) do
+            local value = vim.fn.getenv(var)
+            if value and value ~= vim.NIL then
+                final_env[#final_env + 1] = var .. "=" .. value
+            end
         end
 
         if env then

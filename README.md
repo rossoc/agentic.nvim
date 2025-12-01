@@ -23,6 +23,10 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
   times
 - **🔌 Multiple ACP Providers** - Support for Claude, Gemini, Codex, OpenCode,
   and any other ACP-compliant provider
+- **🔑 Zero Config Authentication** - No API keys needed
+  - **Keep you secrets secret**: run `claude /login`, or `gemini auth login`
+    once and, if they're working on your Terminal, they will work automatically
+    on Agentic.
 - **📝 Context Control** - Add files and text selections to conversation context
   with one keypress
 - **🛡️ Permission System** - Interactive approval workflow for AI tool calls,
@@ -56,14 +60,8 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
   event = "VeryLazy",
 
   opts = {
-    provider = "claude-acp", -- default provider
-    acp_providers = {
-      ["claude-acp"] = {
-        env = {
-          ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY"),
-        },
-      },
-    },
+    -- Available by default: "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp"
+    provider = "claude-acp", -- setting the name here is all you need to get started
   },
 
   -- these are just suggested keymaps; customize as desired
@@ -91,124 +89,65 @@ https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
 
 ## ⚙️ Configuration
 
-You don't have to copy and paste it, it's just here for reference:
+You don't have to copy and paste anything from the default config, linking it
+here for ease access and reference:
+[`lua/agentic/config_default.lua`](lua/agentic/config_default.lua).
 
-Click to expand:
+### Adding or Overriding ACP Providers
 
-<details>
-<summary>
-    <strong>Default Configuration</strong>
-</summary>
+You can add custom ACP providers or override existing ones by configuring the
+`acp_providers` property:
+
+> [!NOTE]  
+> You don't have to override anything, or include these into your setup.  
+> This is just an example of how you can customize existing providers or add new
+> ones.
 
 ```lua
 {
-  --- Enable printing debug messages which can be read via `:messages`
-  debug = false,
-
-  ---@type "claude-acp" | "gemini-acp" | "codex-acp" | "opencode-acp"
-  provider = "claude-acp",
+  provider = "my-custom-acp",
 
   acp_providers = {
+    -- Override existing provider (e.g., add API key)
+    -- Agentic.nvim don't require API keys, only add it if that's how you prefer to authenticate
     ["claude-acp"] = {
-      command = "claude-code-acp",
       env = {
-        NODE_NO_WARNINGS = "1",
-        IS_AI_TERMINAL = "1",
         ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY"),
       },
     },
 
-    ["gemini-acp"] = {
-      command = "gemini",
-      args = { "--experimental-acp" },
-      env = {
-        NODE_NO_WARNINGS = "1",
-        IS_AI_TERMINAL = "1",
-      },
-    },
 
+    -- override the ACP command to suit your installation
     ["codex-acp"] = {
-      command = "codex-acp",
-      args = {},
-      env = {
-        NODE_NO_WARNINGS = "1",
-        IS_AI_TERMINAL = "1",
-      },
+      command = "~/.local/bin/codex-acp",
     },
 
-    ["opencode-acp"] = {
-      command = "opencode",
-      args = { "acp" },
-      env = {
-        NODE_NO_WARNINGS = "1",
-        IS_AI_TERMINAL = "1",
+    -- Add a new custom provider
+    ["my-custom-acp"] = {
+      name = "My Custom ACP Provider",     -- Display name
+      command = "my-acp-cli",              -- CLI command to spawn
+      args = { "--acp-mode" },             -- Optional command arguments
+      env = {                              -- Optional environment variables
+        API_KEY = os.getenv("MY_API_KEY")  -- Optional, only if your provider needs it
       },
     },
   },
-
-  -- Custom actions to be used with keymaps (optional)
-  actions = {},
-
-  -- Customize keymaps for the chat widget
-  keymaps = {
-    -- Keybindings for ALL buffers in the widget
-    widget = {
-      close = "q",
-      change_mode = {
-        {
-          "<S-Tab>",
-          mode = { "i", "n", "v" },
-        },
-      },
-    },
-
-    -- Keybindings for the prompt buffer only
-    prompt = {
-      submit = {
-        "<CR>",
-        {
-          "<C-s>",
-          mode = { "i", "v" },
-        },
-      },
-    },
-  },
-
-  windows = {
-    width = "40%", -- can be number (cols), string (% of total width), or float (0.1 - 1.0)
-    input = {
-      height = 10, -- height in lines of the prompt input area
-    },
-  },
-
-  spinner_chars = {
-    generating = { "·", "✢", "✳", "∗", "✻", "✽" },
-    thinking = { "🤔", "🤨", "😐" },
-    searching = { "🔎. . .", ". 🔎. .", ". . 🔎." },
-    busy = { "⡀", "⠄", "⠂", "⠁", "⠈", "⠐", "⠠", "⢀", "⣀", "⢄", "⢂", "⢁", "⢈", "⢐", "⢠", "⣠", "⢤", "⢢", "⢡", "⢨", "⢰", "⣰", "⢴", "⢲", "⢱", "⢸", "⣸", "⢼", "⢺", "⢹", "⣹", "⢽", "⢻", "⣻", "⢿", "⣿", },
-  },
-
-  status_icons = {
-    pending = "󰔛",    -- Icon shown for tool calls with pending status
-    completed = "✔",   -- Icon shown for tool calls with completed status
-    failed = "",      -- Icon shown for tool calls with failed status
-  },
-
-
-  permission_icons = {
-    allow_once = "",
-    allow_always = "",
-    reject_once = "",
-    reject_always = "󰜺",
-  },
-
-  file_picker = {
-    enabled = true,   -- Enable @ file completion in the input prompt buffer
-  }
 }
 ```
 
-</details>
+**Provider Configuration Fields:**
+
+- `name` (string) - Display name shown in the UI
+- `command` (string) - The CLI command to execute (must be in PATH or absolute
+  path)
+- `args` (table, optional) - Array of command-line arguments
+- `env` (table, optional) - Environment variables to set for the process
+
+**Notes:**
+
+- Overriding a provider only requires specifying the fields you want to change
+- All providers must be ACP-compliant and communicate via stdio
+- The provider CLI tool must be installed and accessible in your system PATH
 
 ## 📋 Requirements
 
