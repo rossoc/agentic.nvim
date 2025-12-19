@@ -150,12 +150,12 @@ to change, not the entire configuration.
 - **Neovim** v0.11.0 or higher
 - **ACP Provider CLI** - Chose your favorite ACP and install its CLI tool
 
-| Provider                           | Install                                                                                                                                 |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [claude-code-acp][claude-code-acp] | `npm i -g @zed-industries/claude-code-acp`<br/>`brew install --cask claude-code`<br/> `curl -fsSL https://claude.ai/install.sh \| bash` |
-| [gemini-cli][gemini-cli]           | `npm i -g @google/gemini-cli`<br/>`brew install --cask gemini`                                                                          |
-| [codex-acp][codex-acp]             | `npm i -g @zed-industries/codex-acp`<br/>`brew install --cask codex`<br/>[Download binary][codex-acp-releases]                          |
-| [opencode][opencode]               | `npm i -g opencode-ai`<br/>`brew install opencode`<br/>`curl -fsSL https://opencode.ai/install \| bash`                                 |
+| Provider                           | Install                                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [claude-code-acp][claude-code-acp] | `npm i -g @zed-industries/claude-code-acp`<br/>[Download binary][claude-code-acp-releases]              |
+| [gemini-cli][gemini-cli]           | `npm i -g @google/gemini-cli`<br/>`brew install --cask gemini`                                          |
+| [codex-acp][codex-acp]             | `npm i -g @zed-industries/codex-acp`<br/>[Download binary][codex-acp-releases]                          |
+| [opencode][opencode]               | `npm i -g opencode-ai`<br/>`brew install opencode`<br/>`curl -fsSL https://opencode.ai/install \| bash` |
 
 > [!WARNING]  
 > These install commands are here for convenience, please always refer to the
@@ -361,9 +361,10 @@ the the acknowledgments 😊.
 - [avante.nvim](https://github.com/yetone/avante.nvim) - for the ACP client code
   and sidebar structured with multiple panels
 
-[claude-code-acp]: https://www.npmjs.com/package/@zed-industries/claude-code-acp
+[claude-code-acp]: https://github.com/zed-industries/claude-code-acp
+[claude-code-acp-releases]:
+  https://github.com/zed-industries/claude-code-acp/releases
 [gemini-cli]: https://github.com/gemini-cli/gemini-cli
 [codex-acp]: https://github.com/zed-industries/codex-acp
 [codex-acp-releases]: https://github.com/zed-industries/codex-acp/releases
 [opencode]: https://github.com/sst/opencode
-
