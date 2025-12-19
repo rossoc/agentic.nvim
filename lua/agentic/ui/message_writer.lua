@@ -3,7 +3,6 @@ local BufHelpers = require("agentic.utils.buf_helpers")
 local Config = require("agentic.config")
 local DiffHighlighter = require("agentic.utils.diff_highlighter")
 local ExtmarkBlock = require("agentic.utils.extmark_block")
-local FileSystem = require("agentic.utils.file_system")
 local Logger = require("agentic.utils.logger")
 local Theme = require("agentic.theme")
 
@@ -21,17 +20,24 @@ local NS_STATUS = vim.api.nvim_create_namespace("agentic_status_footer")
 --- @field old_line? string Original line content (for diff types)
 --- @field new_line? string Modified line content (for diff types)
 
---- @class agentic.ui.MessageWriter.BlockTracker
---- @field extmark_id integer Range extmark spanning the block
---- @field decoration_extmark_ids integer[] IDs of decoration extmarks from ExtmarkBlock
---- @field kind string Tool call kind (read, edit, etc.)
---- @field argument string Tool call title/command (stored for updates)
---- @field status string Current status (pending, completed, etc.)
---- @field has_diff boolean Whether this block contains diff content
+--- @class agentic.ui.MessageWriter.ToolCallBase
+--- @field tool_call_id string
+--- @field status agentic.acp.ToolCallStatus
+--- @field body string[]|nil
+--- @field diff { new: string[], old: string[], all: boolean|nil }|nil
+--- @field kind agentic.acp.ToolKind|nil
+--- @field argument string|nil
+
+--- @class agentic.ui.MessageWriter.ToolCallBlock : agentic.ui.MessageWriter.ToolCallBase
+--- @field kind agentic.acp.ToolKind
+--- @field argument string
+--- @field extmark_id integer|nil Range extmark spanning the block
+--- @field decoration_extmark_ids integer[]|nil IDs of decoration extmarks from ExtmarkBlock
 
 --- @class agentic.ui.MessageWriter
 --- @field bufnr integer
---- @field tool_call_blocks table<string, agentic.ui.MessageWriter.BlockTracker> Map tool_call_id to extmark
+--- @field tool_call_blocks table<string, agentic.ui.MessageWriter.ToolCallBlock>
+--- @field _last_message_type string|nil
 local MessageWriter = {}
 MessageWriter.__index = MessageWriter
 
@@ -45,6 +51,7 @@ function MessageWriter:new(bufnr)
     local instance = setmetatable({
         bufnr = bufnr,
         tool_call_blocks = {},
+        _last_message_type = nil,
     }, self)
 
     return instance
@@ -76,9 +83,21 @@ function MessageWriter:write_message_chunk(update)
     local text = update.content
         and update.content.type == "text"
         and update.content.text
+
     if not text or text == "" then
         return
     end
+
+    if
+        self._last_message_type == "agent_thought_chunk"
+        and update.sessionUpdate == "agent_message_chunk"
+    then
+        -- Different message type, add newline before appending, to create visual separation
+        -- only for thought -> message
+        text = "\n\n" .. text
+    end
+
+    self._last_message_type = update.sessionUpdate
 
     BufHelpers.with_modifiable(self.bufnr, function(bufnr)
         local last_line = vim.api.nvim_buf_line_count(bufnr) - 1
@@ -126,86 +145,17 @@ function MessageWriter:_auto_scroll(bufnr)
     end, 150)
 end
 
---- @param update agentic.acp.ToolCallMessage
-function MessageWriter:write_tool_call_block(update)
-    if
-        (
-            not update.content
-            ---@diagnostic disable-next-line: invisible -- that's the only way to identify Claude empty tool calls for now
-            or (vim.tbl_isempty(update.content) or update._meta ~= nil)
-        )
-        and (not update.rawInput or vim.tbl_isempty(update.rawInput))
-    then
-        return
-    end
-
+--- @param tool_call_block agentic.ui.MessageWriter.ToolCallBlock
+function MessageWriter:write_tool_call_block(tool_call_block)
     BufHelpers.with_modifiable(self.bufnr, function(bufnr)
-        local kind = update.kind or "tool_call"
-        local argument = ""
-
-        if kind == "fetch" then
-            if update.rawInput.query then
-                kind = "WebSearch"
-            end
-
-            argument = update.rawInput.query
-                or update.rawInput.url
-                or "unknown fetch"
-        elseif kind == "read" then
-            local path = update.rawInput.file_path
-                or (
-                    update.locations
-                    and update.locations[1]
-                    and update.locations[1].path
-                )
-
-            if path then
-                argument = FileSystem.to_smart_path(path)
-            else
-                argument = "unknown read"
-            end
-        elseif kind == "edit" then
-            local path = update.rawInput.file_path
-                or (update.locations and update.locations[1] and update.locations[1].path)
-                or (
-                    update.content
-                    and update.content[1]
-                    and update.content[1].path
-                )
-
-            if path then
-                argument = FileSystem.to_smart_path(path)
-            else
-                argument = "unknown file"
-            end
-        elseif kind == "search" then
-            -- Codex and Gemini uses the `search` kind, Claude uses it's own RG-like cmd
-            local cmd = update.rawInput.parsed_cmd
-                and update.rawInput.parsed_cmd[1]
-                and update.rawInput.parsed_cmd[1].cmd
-
-            -- Codex runs `ls` to "search" for files, normalizing to "execute" for clarity
-            if cmd and cmd == "ls" then
-                kind = "execute"
-                argument = cmd
-            else
-                argument = cmd or update.title or "unknown search"
-            end
-        else
-            local command = update.rawInput.command
-            if type(command) == "table" then
-                command = table.concat(command, " ")
-            end
-
-            argument = command or update.title or ""
-        end
+        local kind = tool_call_block.kind
 
         -- Always add a leading blank line for spacing the previous message chunk
         self:_append_lines({ "" })
 
         local start_row = vim.api.nvim_buf_line_count(bufnr)
         local lines, highlight_ranges =
-            self:_prepare_block_lines(update, kind, argument)
+            self:_prepare_block_lines(tool_call_block)
 
         self:_append_lines(lines)
 
@@ -219,7 +169,7 @@ function MessageWriter:write_tool_call_block(update)
             highlight_ranges
         )
 
-        local decoration_ids =
+        tool_call_block.decoration_extmark_ids =
             ExtmarkBlock.render_block(bufnr, NS_DECORATIONS, {
                 header_line = start_row,
                 body_start = start_row + 1,
@@ -228,39 +178,39 @@ function MessageWriter:write_tool_call_block(update)
                 hl_group = Theme.HL_GROUPS.CODE_BLOCK_FENCE,
             })
 
-        local extmark_id =
+        tool_call_block.extmark_id =
             vim.api.nvim_buf_set_extmark(bufnr, NS_TOOL_BLOCKS, start_row, 0, {
                 end_row = end_row,
                 right_gravity = false,
             })
 
-        self.tool_call_blocks[update.toolCallId] = {
-            extmark_id = extmark_id,
-            decoration_extmark_ids = decoration_ids,
-            kind = kind,
-            argument = argument,
-            status = update.status,
-            has_diff = ACPDiffHandler.has_diff_content(update),
-        }
+        self.tool_call_blocks[tool_call_block.tool_call_id] = tool_call_block
 
-        self:_apply_header_highlight(start_row, update.status)
-        self:_apply_status_footer(end_row, update.status)
+        self:_apply_header_highlight(start_row, tool_call_block.status)
+        self:_apply_status_footer(end_row, tool_call_block.status)
 
         self:_append_lines({ "", "" })
     end)
 end
 
---- @param update agentic.acp.ToolCallUpdate
-function MessageWriter:update_tool_call_block(update)
-    local tracker = self.tool_call_blocks[update.toolCallId]
+--- @param tool_call_block agentic.ui.MessageWriter.ToolCallBase
+function MessageWriter:update_tool_call_block(tool_call_block)
+    local tracker = self.tool_call_blocks[tool_call_block.tool_call_id]
+
     if not tracker then
         Logger.debug(
-            "Tool call block not found",
-            { tool_call_id = update.toolCallId }
+            "Tool call block not found, ID: ",
+            tool_call_block.tool_call_id
         )
 
         return
     end
+
+    -- Some ACP providers don't send the diff on the first tool_call
+    local already_has_diff = tracker.diff ~= nil
+
+    tracker = vim.tbl_deep_extend("force", tracker, tool_call_block)
+    self.tool_call_blocks[tool_call_block.tool_call_id] = tracker
 
     local pos = vim.api.nvim_buf_get_extmark_by_id(
         self.bufnr,
@@ -270,7 +220,10 @@ function MessageWriter:update_tool_call_block(update)
     )
 
     if not pos or not pos[1] then
-        Logger.debug("Extmark not found", { tool_call_id = update.toolCallId })
+        Logger.debug(
+            "Extmark not found",
+            { tool_call_id = tracker.tool_call_id }
+        )
         return
     end
 
@@ -281,28 +234,15 @@ function MessageWriter:update_tool_call_block(update)
     if not old_end_row then
         Logger.debug(
             "Could not determine end row of tool call block",
-            { tool_call_id = update.toolCallId, details = details }
+            { tool_call_id = tracker.tool_call_id, details = details }
         )
         return
     end
 
     BufHelpers.with_modifiable(self.bufnr, function(bufnr)
-        -- For blocks without diffs (read, fetch, etc.) or blocks with diffs,
+        -- Diff blocks don't change after the initial render
         -- only update status highlights - don't replace content
-        -- Exception: WebSearch and read need content updates when results arrive
-        local needs_content_update = (
-            tracker.kind == "WebSearch"
-            or tracker.kind == "fetch"
-            or tracker.kind == "read"
-            or tracker.kind == "search"
-        )
-            and update.content
-            and not vim.tbl_isempty(update.content)
-
-        if
-            not needs_content_update
-            and (tracker.has_diff or tracker.kind == "fetch")
-        then
+        if already_has_diff then
             if old_end_row > vim.api.nvim_buf_line_count(bufnr) then
                 Logger.debug("Footer line index out of bounds", {
                     old_end_row = old_end_row,
@@ -311,9 +251,7 @@ function MessageWriter:update_tool_call_block(update)
                 return
             end
 
-            tracker.status = update.status or tracker.status
-
-            self:_clear_decoration_extmarks(tracker)
+            self:_clear_decoration_extmarks(tracker.decoration_extmark_ids)
             tracker.decoration_extmark_ids =
                 self:_render_decorations(start_row, old_end_row)
 
@@ -321,17 +259,17 @@ function MessageWriter:update_tool_call_block(update)
             self:_apply_status_highlights_if_present(
                 start_row,
                 old_end_row,
-                update.status
+                tracker.status
             )
 
             return
         end
 
-        self:_clear_decoration_extmarks(tracker)
+        self:_clear_decoration_extmarks(tracker.decoration_extmark_ids)
         self:_clear_status_namespace(start_row, old_end_row)
 
-        local new_lines, highlight_ranges =
-            self:_prepare_block_lines(update, tracker.kind, tracker.argument)
+        local new_lines, highlight_ranges = self:_prepare_block_lines(tracker)
+
         vim.api.nvim_buf_set_lines(
             bufnr,
             start_row,
@@ -349,6 +287,7 @@ function MessageWriter:update_tool_call_block(update)
             start_row,
             old_end_row + 1
         )
+
         vim.schedule(function()
             if vim.api.nvim_buf_is_valid(bufnr) then
                 self:_apply_block_highlights(
@@ -370,43 +309,31 @@ function MessageWriter:update_tool_call_block(update)
         tracker.decoration_extmark_ids =
             self:_render_decorations(start_row, new_end_row)
 
-        tracker.status = update.status or tracker.status
         self:_apply_status_highlights_if_present(
             start_row,
             new_end_row,
-            update.status
+            tracker.status
         )
     end)
 end
 
---- @param update agentic.acp.ToolCallMessage | agentic.acp.ToolCallUpdate
---- @param kind string Tool call kind (required for ToolCallUpdate)
---- @param argument string Tool call title (required for ToolCallUpdate)
+--- @param tool_call_block agentic.ui.MessageWriter.ToolCallBlock
 --- @return string[] lines Array of lines to render
 --- @return agentic.ui.MessageWriter.HighlightRange[] highlight_ranges Array of highlight range specifications (relative to returned lines)
-function MessageWriter:_prepare_block_lines(update, kind, argument)
-    -- FIXIT: Codex is sending multiple updates with different values, and formats, causing the blocks to get empty
-    local lines = {}
+function MessageWriter:_prepare_block_lines(tool_call_block)
+    local kind = tool_call_block.kind
+    local argument = tool_call_block.argument
 
-    local header_text = string.format(" %s(%s) ", kind, argument)
-    table.insert(lines, header_text)
+    local lines = {
+        string.format(" %s(%s) ", kind, argument),
+    }
 
     --- @type agentic.ui.MessageWriter.HighlightRange[]
     local highlight_ranges = {}
 
     if kind == "read" then
         -- Count lines from content, we don't want to show full content that was read
-        local line_count = 0
-        for _, content_item in ipairs(update.content or {}) do
-            if content_item.type == "content" and content_item.content then
-                local content = content_item.content
-                if content.type == "text" and content.text then
-                    local content_lines =
-                        vim.split(content.text, "\n", { plain = true })
-                    line_count = line_count + #content_lines
-                end
-            end
-        end
+        local line_count = tool_call_block.body and #tool_call_block.body or 0
 
         if line_count > 0 then
             local info_text = string.format("Read %d lines", line_count)
@@ -420,126 +347,99 @@ function MessageWriter:_prepare_block_lines(update, kind, argument)
 
             table.insert(highlight_ranges, range)
         end
-    elseif kind == "fetch" or kind == "WebSearch" then
-        -- Initial tool_call has rawInput with query/url
-        if update.rawInput then
-            if update.rawInput.prompt then
-                table.insert(lines, update.rawInput.prompt)
-            end
-            if update.rawInput.url then
-                table.insert(lines, update.rawInput.url)
-            end
+    elseif
+        kind == "fetch"
+        or kind == "WebSearch"
+        or kind == "execute"
+        or kind == "search"
+    then
+        if tool_call_block.body then
+            vim.list_extend(lines, tool_call_block.body)
         end
-    end
+    elseif tool_call_block.diff then
+        local diff_blocks = ACPDiffHandler.extract_diff_blocks(
+            argument,
+            tool_call_block.diff.old,
+            tool_call_block.diff.new,
+            tool_call_block.diff.all
+        )
 
-    if kind ~= "read" then
-        if ACPDiffHandler.has_diff_content(update) then
-            local diff_blocks = ACPDiffHandler.extract_diff_blocks(update)
+        local lang = Theme.get_language_from_path(argument)
 
-            local lang = Theme.get_language_from_path(argument)
+        -- Hack to avoid triple backtick conflicts in markdown files
+        local has_fences = lang ~= "md" and lang ~= "markdown"
+        if has_fences then
+            table.insert(lines, "```" .. lang)
+        end
 
-            -- Hack to avoid triple backtick conflicts in markdown files
-            local has_fences = lang ~= "md" and lang ~= "markdown"
-            if has_fences then
-                table.insert(lines, "```" .. lang)
-            end
+        for _, block in ipairs(diff_blocks) do
+            local old_count = #block.old_lines
+            local new_count = #block.new_lines
+            local is_new_file = old_count == 0
+            local is_modification = old_count == new_count and old_count > 0
 
-            -- Single-loop: format diff blocks and track highlights inline
-            -- Sort file paths for deterministic ordering
-            local sorted_paths = {}
-            for path in pairs(diff_blocks) do
-                table.insert(sorted_paths, path)
-            end
-            table.sort(sorted_paths)
-
-            for _, path in ipairs(sorted_paths) do
-                local blocks = diff_blocks[path]
-                if blocks and #blocks > 0 then
-                    for _, block in ipairs(blocks) do
-                        local old_count = #block.old_lines
-                        local new_count = #block.new_lines
-                        local is_modification = old_count == new_count
-                            and old_count > 0
-
-                        -- Insert old lines (removed content)
-                        for i, old_line in ipairs(block.old_lines) do
-                            local line_index = #lines
-                            table.insert(lines, old_line)
-
-                            local new_line = is_modification
-                                    and block.new_lines[i]
-                                or nil
-
-                            --- @type agentic.ui.MessageWriter.HighlightRange
-                            local range = {
-                                line_index = line_index,
-                                type = "old",
-                                old_line = old_line,
-                                new_line = new_line,
-                            }
-
-                            table.insert(highlight_ranges, range)
-                        end
-
-                        -- Insert new lines (added content)
-                        for i, new_line in ipairs(block.new_lines) do
-                            local line_index = #lines
-                            table.insert(lines, new_line)
-
-                            if not is_modification then
-                                -- Pure addition
-                                --- @type agentic.ui.MessageWriter.HighlightRange
-                                local range = {
-                                    line_index = line_index,
-                                    type = "new",
-                                    old_line = nil,
-                                    new_line = new_line,
-                                }
-
-                                table.insert(highlight_ranges, range)
-                            else
-                                -- Modification with word-level diff
-                                --- @type agentic.ui.MessageWriter.HighlightRange
-                                local range = {
-                                    line_index = line_index,
-                                    type = "new_modification",
-                                    old_line = block.old_lines[i],
-                                    new_line = new_line,
-                                }
-
-                                table.insert(highlight_ranges, range)
-                            end
-                        end
-                    end
+            if is_new_file then
+                for _, new_line in ipairs(block.new_lines) do
+                    table.insert(lines, new_line)
                 end
-            end
+            else
+                -- Insert old lines (removed content)
+                for i, old_line in ipairs(block.old_lines) do
+                    local line_index = #lines
+                    table.insert(lines, old_line)
 
-            -- Close code fences, if not markdown, to avoid conflicts
-            if has_fences then
-                table.insert(lines, "```")
-            end
-        end
+                    local new_line = is_modification and block.new_lines[i]
+                        or nil
 
-        for _, content_item in ipairs(update.content or {}) do
-            if content_item.type == "content" and content_item.content then
-                local content = content_item.content
-                if content.type == "text" then
-                    local text = content.text or ""
-                    if text ~= "" then
-                        vim.list_extend(
-                            lines,
-                            vim.split(text, "\n", { plain = true })
-                        )
+                    --- @type agentic.ui.MessageWriter.HighlightRange
+                    local range = {
+                        line_index = line_index,
+                        type = "old",
+                        old_line = old_line,
+                        new_line = new_line,
+                    }
+
+                    table.insert(highlight_ranges, range)
+                end
+
+                -- Insert new lines (added content)
+                for i, new_line in ipairs(block.new_lines) do
+                    local line_index = #lines
+                    table.insert(lines, new_line)
+
+                    if not is_modification then
+                        -- Pure addition
+                        --- @type agentic.ui.MessageWriter.HighlightRange
+                        local range = {
+                            line_index = line_index,
+                            type = "new",
+                            old_line = nil,
+                            new_line = new_line,
+                        }
+
+                        table.insert(highlight_ranges, range)
                     else
-                        table.insert(lines, "")
-                    end
-                elseif content.type == "resource" then
-                    for line in (content.resource.text or ""):gmatch("[^\n]+") do
-                        table.insert(lines, line)
+                        -- Modification with word-level diff
+                        --- @type agentic.ui.MessageWriter.HighlightRange
+                        local range = {
+                            line_index = line_index,
+                            type = "new_modification",
+                            old_line = block.old_lines[i],
+                            new_line = new_line,
+                        }
+
+                        table.insert(highlight_ranges, range)
                     end
                 end
             end
         end
+
+        -- Close code fences, if not markdown, to avoid conflicts
+        if has_fences then
+            table.insert(lines, "```")
+        end
+    else
+        Logger.debug("Unknown tool call kind or missing diff: " .. kind)
     end
 
     table.insert(lines, "")
@@ -779,9 +679,13 @@ function MessageWriter:_apply_status_footer(footer_line, status)
     })
 end
 
---- @param tracker agentic.ui.MessageWriter.BlockTracker
-function MessageWriter:_clear_decoration_extmarks(tracker)
-    for _, id in ipairs(tracker.decoration_extmark_ids) do
+--- @param ids integer[]|nil
+function MessageWriter:_clear_decoration_extmarks(ids)
+    if not ids then
+        return
+    end
+
+    for _, id in ipairs(ids) do
         pcall(vim.api.nvim_buf_del_extmark, self.bufnr, NS_DECORATIONS, id)
     end
 end

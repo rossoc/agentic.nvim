@@ -22,8 +22,6 @@ AgentInstance._instances = {}
 ---@param provider_name string
 --- @param on_ready fun(client: agentic.acp.ACPClient)
 function AgentInstance.get_instance(provider_name, on_ready)
-    local Client = require("agentic.acp.acp_client")
-
     local client = AgentInstance._instances[provider_name]
 
     if client then
@@ -44,7 +42,25 @@ function AgentInstance.get_instance(provider_name, on_ready)
         "Creating new ACP agent instance for provider: " .. provider_name
     )
 
-    client = Client:new(config, on_ready)
+    if provider_name == "claude-acp" then
+        local ClaudeACPAdapter =
+            require("agentic.acp.adapters.claude_acp_adapter")
+        client = ClaudeACPAdapter:new(config, on_ready)
+    elseif provider_name == "codex-acp" then
+        local CodexACPAdapter =
+            require("agentic.acp.adapters.codex_acp_adapter")
+        client = CodexACPAdapter:new(config, on_ready)
+    elseif provider_name == "gemini-acp" then
+        local GeminiACPAdapter =
+            require("agentic.acp.adapters.gemini_acp_adapter")
+        client = GeminiACPAdapter:new(config, on_ready)
+    elseif provider_name == "opencode-acp" then
+        local OpenCodeACPAdapter =
+            require("agentic.acp.adapters.opencode_acp_adapter")
+        client = OpenCodeACPAdapter:new(config, on_ready)
+    else
+        error("Unsupported ACP provider: " .. provider_name)
+    end
 
     AgentInstance._instances[provider_name] = client
 
