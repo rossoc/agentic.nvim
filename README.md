@@ -49,6 +49,10 @@ interface, your colors, and your keymaps.
 
 ## 🎥 Showcase
 
+### Image and Screenshot support in the Chat
+
+https://github.com/user-attachments/assets/d084484b-ca16-4350-b427-16f82d75ed37
+
 ### Simple replace with tool approval:
 
 https://github.com/user-attachments/assets/4b33bb18-95f7-4fea-bc12-9a9208823911
