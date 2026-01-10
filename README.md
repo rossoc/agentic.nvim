@@ -51,7 +51,7 @@ interface, your colors, and your keymaps.
 
 ### Image and Screenshot support in the Chat
 
-https://github.com/user-attachments/assets/d084484b-ca16-4350-b427-16f82d75ed37
+https://github.com/user-attachments/assets/6ae57136-9c08-4d71-bc8a-59babc49be4d
 
 ### Simple replace with tool approval:
 
