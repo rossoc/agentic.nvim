@@ -482,7 +482,6 @@ function ChatWidget:_create_new_buf(opts)
         bufhidden = "hide",
         buflisted = false,
         modifiable = false,
-        syntax = "markdown",
     }, opts)
 
     for key, value in pairs(config) do
