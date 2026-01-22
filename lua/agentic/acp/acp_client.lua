@@ -714,6 +714,7 @@ return ACPClient
 --- | "SubAgent"
 --- | "other"
 --- | "create"
+--- | "Skill"
 
 --- @alias agentic.acp.ToolCallStatus
 --- | "pending"

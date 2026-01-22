@@ -387,6 +387,7 @@ function MessageWriter:_prepare_block_lines(tool_call_block)
         or kind == "execute"
         or kind == "search"
         or kind == "SubAgent"
+        or kind == "Skill"
     then
         if tool_call_block.body then
             vim.list_extend(lines, tool_call_block.body)

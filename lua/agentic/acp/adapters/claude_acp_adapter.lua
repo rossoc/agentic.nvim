@@ -6,6 +6,8 @@ local Logger = require("agentic.utils.logger")
 --- @field content? string For creating new files instead of new_string
 --- @field subagent_type? string For sub-agent tasks (Task tool)
 --- @field model? string Model used for sub-agent tasks
+--- @field skill? string Skill name
+--- @field args? string Arguments for the skill
 
 --- @class agentic.acp.ClaudeToolCallMessage : agentic.acp.ToolCallMessage
 --- @field rawInput? agentic.acp.ClaudeRawInput
@@ -113,6 +115,13 @@ function ClaudeACPAdapter:_handle_tool_call(session_id, update)
         if update.title == "SlashCommand" then
             -- Override kind to increase UX, `other` doesn't say much
             message.kind = "SlashCommand"
+        elseif update.title == "Skill" then
+            message.kind = "Skill"
+            message.argument = update.rawInput.skill or "unknown skill"
+
+            if update.rawInput.args then
+                message.body = vim.split(update.rawInput.args, "\n")
+            end
         end
     else
         local command = update.rawInput.command
