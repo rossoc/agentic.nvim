@@ -1,5 +1,6 @@
 local Config = require("agentic.config")
 local BufHelpers = require("agentic.utils.buf_helpers")
+local DiffPreview = require("agentic.ui.diff_preview")
 local Logger = require("agentic.utils.logger")
 local WindowDecoration = require("agentic.ui.window_decoration")
 
@@ -407,6 +408,8 @@ function ChatWidget:_bind_keymaps()
             end
         end
     end
+
+    DiffPreview.setup_diff_navigation_keymaps(self.buf_nrs)
 end
 
 --- @return agentic.ui.ChatWidget.BufNrs

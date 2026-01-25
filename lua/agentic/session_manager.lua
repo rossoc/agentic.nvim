@@ -4,11 +4,12 @@
 -- When the user switches the provider, the SessionManager should handle the transition smoothly,
 -- ensuring that the new session is properly set up and all the previous messages are sent to the new agent provider without duplicating them in the chat widget
 
-local Logger = require("agentic.utils.logger")
-local FileSystem = require("agentic.utils.file_system")
-local TodoList = require("agentic.ui.todo_list")
 local Config = require("agentic.config")
+local DiffPreview = require("agentic.ui.diff_preview")
+local FileSystem = require("agentic.utils.file_system")
+local Logger = require("agentic.utils.logger")
 local SlashCommands = require("agentic.acp.slash_commands")
+local TodoList = require("agentic.ui.todo_list")
 
 --- @class agentic._SessionManagerPrivate
 local P = {}
@@ -405,6 +406,13 @@ function SessionManager:new_session()
         on_tool_call_update = function(tool_call_update)
             self.message_writer:update_tool_call_block(tool_call_update)
 
+            -- pre-emptively clear diff preview when tool call update is received, as it's either done or failed
+            local is_rejection = tool_call_update.status == "failed"
+            self:_clear_diff_in_buffer(
+                tool_call_update.tool_call_id,
+                is_rejection
+            )
+
             -- I need to remove the permission request if the tool call failed before user granted it
             -- It could happen for many reasons, like invalid parameters, tool not found, etc.
             -- Mostly comes from the Agent.
@@ -425,8 +433,15 @@ function SessionManager:new_session()
         on_request_permission = function(request, callback)
             self.status_animation:stop()
 
-            local wrapped_callback = function(option_id)
+            local function wrapped_callback(option_id)
                 callback(option_id)
+
+                local is_rejection = option_id == "reject_once"
+                    or option_id == "reject_always"
+                self:_clear_diff_in_buffer(
+                    request.toolCall.toolCallId,
+                    is_rejection
+                )
 
                 if
                     not self.permission_manager.current_request
@@ -436,6 +451,7 @@ function SessionManager:new_session()
                 end
             end
 
+            self:_show_diff_in_buffer(request.toolCall.toolCallId)
             self.permission_manager:add_request(request, wrapped_callback)
         end,
     }
@@ -541,6 +557,59 @@ function SessionManager:add_file_to_session(buf)
     local buf_path = vim.api.nvim_buf_get_name(bufnr)
 
     return self.file_list:add(buf_path)
+end
+
+--- @param tool_call_id string
+function SessionManager:_show_diff_in_buffer(tool_call_id)
+    -- Only show diff if enabled by user config,
+    -- and cursor is in the same tabpage as this session to avoid disruption
+    if
+        not Config.diff_preview.enabled
+        or vim.api.nvim_get_current_tabpage() ~= self.tab_page_id
+    then
+        return
+    end
+
+    local tracker = tool_call_id
+        and self.message_writer.tool_call_blocks[tool_call_id]
+
+    if not tracker or tracker.kind ~= "edit" or tracker.diff == nil then
+        return
+    end
+
+    DiffPreview.show_diff({
+        file_path = tracker.argument,
+        diff = tracker.diff,
+        get_winid = function(bufnr)
+            local winid = self.widget:find_first_non_widget_window()
+            if not winid then
+                return self.widget:open_left_window(bufnr)
+            end
+            local ok, err = pcall(vim.api.nvim_win_set_buf, winid, bufnr)
+
+            if not ok then
+                Logger.notify(
+                    "Failed to set buffer in window: " .. tostring(err),
+                    vim.log.levels.WARN
+                )
+                return nil
+            end
+            return winid
+        end,
+    })
+end
+
+--- @param tool_call_id string
+--- @param is_rejection? boolean
+function SessionManager:_clear_diff_in_buffer(tool_call_id, is_rejection)
+    local tracker = tool_call_id
+        and self.message_writer.tool_call_blocks[tool_call_id]
+
+    if not tracker or tracker.kind ~= "edit" or tracker.diff == nil then
+        return
+    end
+
+    DiffPreview.clear_diff(tracker.argument, is_rejection)
 end
 
 function SessionManager:_get_system_info()

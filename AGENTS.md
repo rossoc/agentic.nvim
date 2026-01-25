@@ -1,27 +1,8 @@
-<!-- OPENSPEC:START -->
-# OpenSpec Instructions
-
-These instructions are for AI assistants working in this project.
-
-Always open `@/openspec/AGENTS.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan)
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
-- Sounds ambiguous and you need the authoritative spec before coding
-
-Use `@/openspec/AGENTS.md` to learn:
-- How to create and apply change proposals
-- Spec format and conventions
-- Project structure and guidelines
-
-Keep this managed block so 'openspec update' can refresh the instructions.
-
-<!-- OPENSPEC:END -->
-
 # Agents Guide
 
 **agentic.nvim** is a Neovim plugin that emulates Cursor AI IDE behavior,
-providing AI-driven code assistance through a chat sidebar for interactive
-conversations.
+providing AI-driven code assistance through a chat interface for interactive
+conversations, code generation, and permission approvals.
 
 ## 📋 Documentation Scope
 
@@ -398,15 +379,15 @@ local MyClass = {}
 MyClass.__index = MyClass
 
 --- Creates a new instance of MyClass
---- @param name string The name parameter
---- @param options table|nil Optional configuration table
---- @return MyClass instance The created instance
+--- @param name string
+--- @param options table|nil
+--- @return MyClass instance
 function MyClass:new(name, options)
     return setmetatable({ public_field = name }, self)
 end
 
 --- Performs an operation and returns success status
---- @return boolean success Whether the operation succeeded
+--- @return boolean success
 function MyClass:do_something()
     return true
 end
@@ -416,27 +397,49 @@ end
 
 - Always include a space after `---` for both descriptions and annotations
 - Use `@private` or `@protected` for internal implementation details
+- Do NOT provide meaningful parameter and return descriptions, unless requested
+
+- **Return annotation format:** Use `@return {type} return_name description`
+  format:
+  - ✅ **CORRECT:** `@return boolean success Whether the operation succeeded`
+  - ✅ **CORRECT:**
+    `@return string|nil result The result if successful, nil otherwise`
+  - ❌ **WRONG:** `@return boolean Whether the operation succeeded` - Missing
+    return name
+  - ❌ **WRONG:** `@return success boolean` - Wrong order (type must come first)
 
 - **Optional types:** Format depends on annotation type
 
-  **`@param` and `@field` annotations - Use `variable? type` format:**
-  - ✅ **CORRECT:** `@param winid? number` - `?` goes AFTER the variable name
+  **`@param` annotations - MUST use explicit `type|nil` union:**
+  - ✅ **CORRECT:** `@param winid number|nil` - Explicit union type required
+  - ✅ **CORRECT:** `@param options table|nil` - Optional parameter
+  - ❌ **WRONG:** `@param winid? number` - LuaLS doesn't properly validate
+    optional syntax
+  - ❌ **WRONG:** `@param winid number?` - Wrong syntax
+  - **Reason:** Due to
+    [LuaLS limitation](https://github.com/LuaLS/lua-language-server/issues/2385),
+    optional `?` syntax is not properly validated for function parameters, so
+    explicit `|nil` union must be used
+  - **Note:** Function type parameters also use `|nil`:
+    - ✅ **CORRECT:** `@param callback fun(result: table|nil)` - Explicit union
+      required
+    - ❌ **WRONG:** `@param callback fun(result?: table)` - LuaLS doesn't
+      validate this
+
+  **`@field` annotations - Use `variable? type` format:**
   - ✅ **CORRECT:** `@field _state? string` - `?` goes AFTER the variable name
   - ✅ **CORRECT:** `@field diff? { all?: boolean }` - Inline table fields also
     support optional `?`
-  - ❌ **WRONG:** `@param winid number|nil` - Use `variable? type` instead
-  - ❌ **WRONG:** `@param winid number?` - `?` must be after variable name, not
-    type
   - ❌ **WRONG:** `@field _state string|nil` - Use `variable? type` instead
   - ❌ **WRONG:** `@field _state string?` - `?` must be after variable name, not
     type
 
   **`@return`, `@type`, and `@alias` annotations - Use explicit `type|nil`
   union:**
-  - ✅ **CORRECT:** `@return string|nil` - Explicit union type
+  - ✅ **CORRECT:** `@return string|nil result` - Explicit union type
   - ✅ **CORRECT:** `@type table<string, number|nil>` - Explicit union type
   - ✅ **CORRECT:** `@alias MyType string|nil` - Explicit union type
-  - ❌ **WRONG:** `@return string?` - Do NOT use `?` after type
+  - ❌ **WRONG:** `@return string? result` - Do NOT use `?` after type
   - ❌ **WRONG:** `@type table<string, number?>` - Do NOT use `?` after type
   - ❌ **WRONG:** `@alias MyType string?` - Do NOT use `?` after type
   - **Reason:** Makes the optional nature more explicit in type definitions
@@ -449,6 +452,33 @@ end
     declarations, luals ignores it and don't run null checks properly
   - **Note:** `@param` and `@field` annotations can use `variable? type`, but
     inline `fun()` parameters must use `type|nil`
+
+- **Typed variables before return:** When returning complex types (tables,
+  arrays, custom classes), use a typed intermediate variable instead of
+  returning directly. LuaLS cannot infer types from inline return statements.
+
+  ```lua
+  -- ❌ Bad: LuaLS cannot infer the return type
+  function M.create_block(lines)
+      return {
+          start_line = 1,
+          end_line = #lines,
+          content = lines,
+      }
+  end
+
+  -- ✅ Good: Type annotation enables proper type checking
+  --- @return MyModule.Block block
+  function M.create_block(lines)
+      --- @type MyModule.Block
+      local block = {
+          start_line = 1,
+          end_line = #lines,
+          content = lines,
+      }
+      return block
+  end
+  ```
 
 - Do NOT provide meaningful parameter and return descriptions, unless requested
 - Group related annotations together (class fields, function params, returns)
@@ -467,44 +497,92 @@ end
 
 ### 🚨 MANDATORY: Post-Change Validation for Lua Files
 
-**ALWAYS run both linters after making ANY Lua file changes:**
+**ALWAYS run all validations after making ANY Lua file changes:**
 
 ```bash
-make luals      # REQUIRED: Run type checking
-make luacheck   # REQUIRED: Run style/syntax checking
+make validate
 ```
 
-### 🚨 Output Management for Validation Commands
+This single command runs:
 
-**When running tests, linters, docker build, or validation commands, redirect
-output to avoid context window flooding:**
+- `make format` - Format all Lua files
+- `make luals` - Type checking
+- `make luacheck` - Linting
+- `make test` - All tests
+
+**Why use `make validate`:**
+
+- Validations are fast (< 5 seconds combined)
+- Single permission prompt for all checks
+- Ensures all checks pass together
+- Output redirected to log files automatically
+
+**Output format (exactly 5-6 lines):**
+
+The `make validate` command outputs **only 5-6 short lines** to stdout. Example:
 
 ```bash
-# Redirect output to log file and capture exit code
-make luals > ./.local/agentic_luals_output.log 2>&1; echo $?
-make luacheck > ./.local/agentic_luacheck_output.log 2>&1; echo $?
-make test-file FILE=<test_file> > ./.local/agentic_test_output.log 2>&1; echo $?
+format: 0 (took 1s) - log: .local/agentic_format_output.log
+luals: 0 (took 2s) - log: .local/agentic_luals_output.log
+luacheck: 0 (took 0s) - log: .local/agentic_luacheck_output.log
+test: 0 (took 1s) - log: .local/agentic_test_output.log
+Total: 4s
 ```
+
+Each line shows: `{task}: {exit_code} (took {seconds}s) - log: {log_path}`
+
+- Exit code `0` = success, non-zero = failure
+- Verbose output is written to log files, NOT stdout
+
+**🚨 FORBIDDEN: Output redirection**
+
+- **NEVER redirect `make validate` output** - it's already minimal (5-6 lines)
+- **NEVER use `> file`, `>> file`, `2>&1`, `| tee`, etc.** on `make validate`
+- **NEVER use `head`, `tail`, or pipes** on `make validate` output
+- The command handles its own log file redirection internally
+
+```bash
+# ❌ FORBIDDEN - Don't redirect output
+make validate > my_output.log
+make validate 2>&1 | tee output.log
+make validate | head -20
+
+# ✅ CORRECT - Run directly, read the 5-6 lines output
+make validate
+```
+
+**CRITICAL: Log file locations (defined by Makefile):**
+
+The `make validate` target writes verbose output to these **exact paths** in the
+project root:
+
+- `.local/agentic_format_output.log` - StyLua formatting output
+- `.local/agentic_luals_output.log` - LuaLS type checking output
+- `.local/agentic_luacheck_output.log` - Luacheck linting output
+- `.local/agentic_test_output.log` - Test runner output
 
 **Rules:**
 
-- Use unique log file names to avoid collisions
-- Only read the exit code (0 = success, non-zero = failure)
-- If the command fails, read the log file, this prevents large output from
-  consuming context window unnecessarily
+- **NEVER create or write to different log file paths** - always use the paths
+  above
+- Only read exit codes from `make validate` output unless there's a failure
+- If any command fails, read the corresponding log file to diagnose the issue
 
-**Reading log files:**
+**Reading log files (only when validation fails):**
 
 - **NEVER use Read tool** - floods context with entire file
 - **Use targeted commands instead:**
-  - `tail -n 10 <logfile>` - Last 10 lines (errors usually at end)
-  - `rg "error|warning|fail" <logfile>` - Search for specific patterns
-    (smart-case by default)
-  - `grep -i "error" <logfile>` - Search with grep (case-insensitive)
+  - `tail -n 10 .local/agentic_luals_output.log` - Last 10 lines (errors usually
+    at end)
+  - `rg "error|warning|fail" .local/agentic_test_output.log` - Search for
+    specific patterns (smart-case by default)
+  - `grep -i "error" .local/agentic_luacheck_output.log` - Search with grep
+    (case-insensitive)
 - Increase line count only if needed for context
 - Read only what's needed to diagnose the issue
-- **If multiple reads needed:** Use `cat <logfile>` once for entire file instead
-  of reading multiple chunks (avoids loops of reading trying to find info)
+- **If multiple reads needed:** Use `cat .local/agentic_*_output.log` once for
+  entire file instead of reading multiple chunks (avoids loops of reading trying
+  to find info)
 
 ### Testing
 
@@ -517,12 +595,14 @@ project and provides comprehensive type checking.
 
 ### Available Make targets:
 
-Make for running Lua linting and type checking tools:
-
 - `make luals` - Run Lua Language Server headless diagnosis (type checking) -
   **Use this for full project type checks**
 - `make luacheck` - Run Luacheck linter (style and syntax checking)
-- `make print-vimruntime` - Display the detected VIMRUNTIME path
+- `make format` - Format all Lua files with StyLua
+- `make format-file FILE=path/to/file.lua` - Format a specific file
+
+**For more targets and implementation details:** Read the `Makefile` at the
+project root
 
 ### Tool overrides:
 
@@ -543,15 +623,6 @@ be removed, only updated when the underlying types change.
 #### Config File Changes
 
 The `lua/agentic/config_default.lua` file defines all user-configurable options.
-
-**IMPORTANT:** When adding or refactoring configuration options:
-
-1. Add/update the configuration in `config_default.lua` with proper LuaCATS type
-   annotations
-2. **ALWAYS update the README.md** "Configuration" section:
-   - Include default values
-   - Update the configuration table if one exists
-   - Document environment variables if any
 
 #### Theme & Highlight Groups
 
@@ -641,39 +712,18 @@ The ACP documentation can be found at:
 - Extensibility: https://agentclientprotocol.com/protocol/extensibility.md
 - Transports: https://agentclientprotocol.com/protocol/transports.md
 
+##### ACP architectural limitations:
+
+- **No partial acceptance of file changes:** Users must accept or reject the
+  entire file's changes as a unit. The ACP protocol is async and transactional
+  (all-or-nothing tool calls). Implementing partial acceptance would require
+  complex workarounds (e.g., auto-accepting then partially reverting) which adds
+  significant complexity. This feature is deferred/out of scope.
+
 ### Neovim Documentation Files and help docs
 
 **IMPORTANT**: For dealing with neovim native features and APIs, refer to the
-official docs. Common documentation files include:
-
-- api.txt - Neovim Lua API
-- autocmd.txt - Autocommands
-- change.txt - Changing text
-- channel.txt - Channels and jobs
-- cmdline.txt - Command-line editing
-- diagnostic.txt - Diagnostics
-- diff.txt - Diff mode
-- editing.txt - Editing files
-- fold.txt - Folding
-- indent.txt - Indentation
-- insert.txt - Insert mode
-- job_control.txt - Job control
-- lsp.txt - LSP client
-- lua.txt - Lua API
-- lua-guide.txt - Lua guide
-- map.txt - Key mapping
-- motion.txt - Motion commands
-- options.txt - Options
-- pattern.txt - Patterns and search
-- quickfix.txt - Quickfix and location lists
-- syntax.txt - Syntax highlighting
-- tabpage.txt - Tab pages
-- terminal.txt - Terminal emulator
-- treesitter.txt - Treesitter
-- ui.txt - UI
-- undo.txt - Undo and redo
-- windows.txt - Windows
-- various.txt - Various commands
+official docs.
 
 **CRITICAL**: Do NOT run `nvim --headless` or any other `nvim` command to read
 help documentation. Use direct file access instead.
@@ -686,27 +736,12 @@ with development environment.
 Always prefer reading local documentation files directly from the Neovim runtime
 path, because they reflect the exact version installed on my system.
 
-- **If Neovim binary path is known from context:**
-
-  Use the known path to derive the runtime documentation directory
-
-- **If Neovim binary path is unknown:**
-
-  Discover Neovim installation location:
-
-  ```bash
-  realpath $(which nvim)
-  ```
-
-Then, after getting the binary path, derive the runtime documentation directory:
-
 Common path patterns after discovery:
 
-- **macOS (Homebrew):** `/opt/homebrew/Cellar/neovim/<formula-version>/bin/nvim`
-  - Runtime docs:
-    `/opt/homebrew/Cellar/neovim/<formula-version>/share/nvim/runtime/doc/`
-  - Note: `<formula-version>` may include formula revision (e.g., `0.11.5_1`),
-    that's why knowing the real path is important.
+- **macOS (Homebrew):**
+  - Runtime docs: `/opt/homebrew/Cellar/neovim/*/share/nvim/runtime/doc/`
+  - Note: We don't need the exact version, just use the wildcard `*` to match
+    the installed version
 - **Linux (Snap):** `/snap/nvim/current/usr/bin/nvim`
   - Runtime docs: `/snap/nvim/current/usr/share/nvim/runtime/doc/`
 
@@ -716,5 +751,5 @@ Common path patterns after discovery:
 https://raw.githubusercontent.com/neovim/neovim/refs/tags/v<version>/runtime/doc/<doc-name>.txt
 ```
 
-**Tip:** Use `rg`, or `grep` on the `runtime/doc` folder when unsure which file
-contains needed info.
+**Tip:** Do not assume a file contains what you need, use `rg`, or `grep` on the
+`runtime/doc` folder to find the file containing needed info.

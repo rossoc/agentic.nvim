@@ -1,7 +1,8 @@
-local ACPDiffHandler = require("agentic.acp.acp_diff_handler")
+local ToolCallDiff = require("agentic.ui.tool_call_diff")
 local BufHelpers = require("agentic.utils.buf_helpers")
 local Config = require("agentic.config")
 local DiffHighlighter = require("agentic.utils.diff_highlighter")
+local DiffPreview = require("agentic.ui.diff_preview")
 local ExtmarkBlock = require("agentic.utils.extmark_block")
 local Logger = require("agentic.utils.logger")
 local Theme = require("agentic.theme")
@@ -20,11 +21,16 @@ local NS_STATUS = vim.api.nvim_create_namespace("agentic_status_footer")
 --- @field old_line? string Original line content (for diff types)
 --- @field new_line? string Modified line content (for diff types)
 
+--- @class agentic.ui.MessageWriter.ToolCallDiff
+--- @field new string[]
+--- @field old string[]
+--- @field all? boolean
+
 --- @class agentic.ui.MessageWriter.ToolCallBase
 --- @field tool_call_id string
 --- @field status agentic.acp.ToolCallStatus
 --- @field body? string[]
---- @field diff? { new: string[], old: string[], all?: boolean }
+--- @field diff? agentic.ui.MessageWriter.ToolCallDiff
 --- @field kind? agentic.acp.ToolKind
 --- @field argument? string
 
@@ -370,8 +376,7 @@ function MessageWriter:_prepare_block_lines(tool_call_block)
         local line_count = tool_call_block.body and #tool_call_block.body or 0
 
         if line_count > 0 then
-            local info_text = string.format("Read %d lines", line_count)
-            table.insert(lines, info_text)
+            table.insert(lines, string.format("Read %d lines", line_count))
 
             --- @type agentic.ui.MessageWriter.HighlightRange
             local range = {
@@ -393,12 +398,12 @@ function MessageWriter:_prepare_block_lines(tool_call_block)
             vim.list_extend(lines, tool_call_block.body)
         end
     elseif tool_call_block.diff then
-        local diff_blocks = ACPDiffHandler.extract_diff_blocks(
-            argument,
-            tool_call_block.diff.old,
-            tool_call_block.diff.new,
-            tool_call_block.diff.all
-        )
+        local diff_blocks = ToolCallDiff.extract_diff_blocks({
+            path = argument,
+            old_text = tool_call_block.diff.old,
+            new_text = tool_call_block.diff.new,
+            replace_all = tool_call_block.diff.all,
+        })
 
         local lang = Theme.get_language_from_path(argument)
 
@@ -419,52 +424,56 @@ function MessageWriter:_prepare_block_lines(tool_call_block)
                     table.insert(lines, new_line)
                 end
             else
+                local filtered = ToolCallDiff.filter_unchanged_lines(
+                    block.old_lines,
+                    block.new_lines
+                )
+
                 -- Insert old lines (removed content)
-                for i, old_line in ipairs(block.old_lines) do
-                    local line_index = #lines
-                    table.insert(lines, old_line)
+                for _, pair in ipairs(filtered.pairs) do
+                    if pair.old_line then
+                        local line_index = #lines
+                        table.insert(lines, pair.old_line)
 
-                    local new_line = is_modification and block.new_lines[i]
-                        or nil
+                        --- @type agentic.ui.MessageWriter.HighlightRange
+                        local range = {
+                            line_index = line_index,
+                            type = "old",
+                            old_line = pair.old_line,
+                            new_line = is_modification and pair.new_line or nil,
+                        }
 
-                    --- @type agentic.ui.MessageWriter.HighlightRange
-                    local range = {
-                        line_index = line_index,
-                        type = "old",
-                        old_line = old_line,
-                        new_line = new_line,
-                    }
-
-                    table.insert(highlight_ranges, range)
+                        table.insert(highlight_ranges, range)
+                    end
                 end
 
                 -- Insert new lines (added content)
-                for i, new_line in ipairs(block.new_lines) do
-                    local line_index = #lines
-                    table.insert(lines, new_line)
+                for _, pair in ipairs(filtered.pairs) do
+                    if pair.new_line then
+                        local line_index = #lines
+                        table.insert(lines, pair.new_line)
 
-                    if not is_modification then
-                        -- Pure addition
-                        --- @type agentic.ui.MessageWriter.HighlightRange
-                        local range = {
-                            line_index = line_index,
-                            type = "new",
-                            old_line = nil,
-                            new_line = new_line,
-                        }
+                        if not is_modification then
+                            --- @type agentic.ui.MessageWriter.HighlightRange
+                            local range = {
+                                line_index = line_index,
+                                type = "new",
+                                old_line = nil,
+                                new_line = pair.new_line,
+                            }
 
-                        table.insert(highlight_ranges, range)
-                    else
-                        -- Modification with word-level diff
-                        --- @type agentic.ui.MessageWriter.HighlightRange
-                        local range = {
-                            line_index = line_index,
-                            type = "new_modification",
-                            old_line = block.old_lines[i],
-                            new_line = new_line,
-                        }
+                            table.insert(highlight_ranges, range)
+                        else
+                            --- @type agentic.ui.MessageWriter.HighlightRange
+                            local range = {
+                                line_index = line_index,
+                                type = "new_modification",
+                                old_line = pair.old_line,
+                                new_line = pair.new_line,
+                            }
 
-                        table.insert(highlight_ranges, range)
+                            table.insert(highlight_ranges, range)
+                        end
                     end
                 end
             end
@@ -538,6 +547,10 @@ function MessageWriter:display_permission_buttons(tool_call_id, options)
     end
 
     table.insert(lines_to_append, "--- ---")
+
+    local hint_line_index =
+        DiffPreview.add_navigation_hint(tracker, lines_to_append)
+
     table.insert(lines_to_append, "")
 
     local button_start_row = vim.api.nvim_buf_line_count(self.bufnr)
@@ -547,6 +560,15 @@ function MessageWriter:display_permission_buttons(tool_call_id, options)
     end)
 
     local button_end_row = vim.api.nvim_buf_line_count(self.bufnr) - 1
+
+    if hint_line_index then
+        DiffPreview.apply_hint_styling(
+            self.bufnr,
+            NS_PERMISSION_BUTTONS,
+            button_start_row,
+            hint_line_index
+        )
+    end
 
     -- Create extmark to track button block
     vim.api.nvim_buf_set_extmark(
