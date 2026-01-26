@@ -2,10 +2,20 @@
 
 ![PR Checks](https://github.com/carlos-algms/agentic.nvim/actions/workflows/pr-check.yml/badge.svg)
 
-> ⚡ A blazingly fast Chat interface for ACP providers in Neovim
+> ⚡ A Chat interface for Ai agents in Neovim that supports Claude, Gemini,
+> Codex, OpenCode, Cursor Agent, and Auggie through the Agent Client Protocol
+> (ACP).
 
 **Agentic.nvim** brings your AI assistant to Neovim through the implementation
 of the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
+
+Without reinventing the wheel, Agentic.nvim is the interface, your agent is the
+Brain. This plugin will use all the same configurations and authentication
+methods you already have set up on your terminal.
+
+You can start your work in Neovim, close it, and resume from the terminal, if
+your agent supports session restoration. (Session restoration inside Neovim is
+not supported yet, ACP limitation)
 
 You'll get the same results and performance as you would when using the ACP
 provider's official CLI directly from the terminal.
@@ -283,15 +293,24 @@ header parts:
 
 ### Optional Parameters
 
-Content-adding methods accept an optional `opts` table:
+Open and Toggle supports optional parameter:
 
-- **`focus_prompt`** (boolean, default: `true`) - Whether to move cursor to
-  prompt input after opening the chat
+- **auto_add_to_context** (boolean, default: `true`) - Whether to automatically
+  add the current visual selection or file to context when opening the Chat
+
+```lua
+-- Open the chat without adding anything to context
+require("agentic").open({ auto_add_to_context = false })
+```
+
+When adding files or selections to context, you can also specify whether to
+focus the prompt input after opening the chat:
+
+- **focus_prompt** (boolean, default: `true`) - Whether to move cursor to prompt
+  input after opening the chat
 
 Available on: `add_selection(opts)`, `add_file(opts)`,
 `add_selection_or_file_to_context(opts)`
-
-**Example:**
 
 ```lua
 -- Add selection without focusing the prompt
@@ -538,7 +557,53 @@ colorscheme.
 If any of these highlight exists, Agentic will use it instead of creating new
 ones.
 
-## Integration with Lualine
+## Integration with other Plugins
+
+### Prompt suggestions with Copilot
+
+To get Copilot suggestions while you are typing your prompt, you need to tell
+Copilot to attach to the `AgenticInput` filetype.
+
+#### copilot.vim
+
+```lua
+{
+  "github/copilot.vim",
+   -- ....
+  init = function()
+      vim.g.copilot_filetypes = {
+          AgenticInput = true,
+      }
+  end,
+}
+```
+
+#### copilot.lua
+
+```lua
+{
+  "zbirenbaum/copilot.lua",
+  -- ....
+  opts = {
+    -- Override should_attach to allow copilot in AgenticInput buffers
+    -- AgenticInput uses buftype = "nofile" which copilot.lua rejects by default
+    should_attach = function(bufnr, bufname)
+      local filetype = vim.bo[bufnr].filetype
+
+      if filetype == "AgenticInput" then
+          return true
+      end
+
+      -- Delegate to default behavior for all other buffers
+      local default_should_attach =
+          require("copilot.config.should_attach").default
+      return default_should_attach(bufnr, bufname)
+    end,
+  },
+}
+```
+
+### Lualine
 
 If you're using [lualine.nvim](https://github.com/nvim-lualine/lualine.nvim) or
 similar statusline plugins, configure it to ignore Agentic windows to prevent
@@ -557,6 +622,54 @@ require('lualine').setup({
 
 This ensures that Agentic's custom window titles and statuslines render
 correctly without interference from your statusline plugin.
+
+### Markdown render plugins
+
+Only the `AgenticChat` buffer is properly set as `markdown` and starts
+Treesitter parser, you only need to mention it in your markdown render plugin
+setup.
+
+```lua
+{
+  "MeanderingProgrammer/render-markdown.nvim",
+  -- ...
+  opts = {
+    file_types = { "markdown", "md", "AgenticChat" },
+  }
+}
+```
+
+### Blink.cmp
+
+You can disable `blink.cmp` from attaching to Agentic prompt buffers by adding
+the following to your `blink.cmp` setup:
+
+```lua
+require('blink.cmp').setup({
+  enabled = function()
+    return not vim.tbl_contains({"AgenticInput"}, vim.bo.filetype)
+  end,
+})
+```
+
+### nvim-cmp
+
+You can disable `nvim-cmp` from attaching to Agentic prompt buffers by using
+filetype-specific setup or the `enabled` option:
+
+```lua
+-- Option 1: Filetype-specific setup (disable all sources)
+require('cmp').setup.filetype('AgenticInput', {
+  sources = {}
+})
+
+-- Option 2: Global enabled function
+require('cmp').setup({
+  enabled = function()
+    return not vim.tbl_contains({"AgenticInput"}, vim.bo.filetype)
+  end,
+})
+```
 
 ## 🔧 Development
 
@@ -630,3 +743,4 @@ the the acknowledgments 😊.
 [cursor-agent]: https://github.com/blowmage/cursor-agent-acp-npm
 [auggie]: https://www.npmjs.com/package/@augmentcode/auggie
 [auggie-docs]: https://docs.augmentcode.com/cli/setup-auggie
+
