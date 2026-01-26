@@ -1,3 +1,4 @@
+local Config = require("agentic.config")
 local FileSystem = require("agentic.utils.file_system")
 local Logger = require("agentic.utils.logger")
 local TextMatcher = require("agentic.utils.text_matcher")
@@ -153,6 +154,17 @@ function M.show_split_diff(opts)
     vim.bo[bufnr].modified = true
 
     vim.bo[scratch_bufnr].modifiable = false
+
+    vim.schedule(function()
+        if not vim.api.nvim_win_is_valid(target_winid) then
+            return
+        end
+        local center_cmd = Config.diff_preview.center_on_navigate_hunks and "zz"
+            or ""
+        pcall(vim.api.nvim_win_call, target_winid, function()
+            vim.cmd("normal! gg]c" .. center_cmd)
+        end)
+    end)
 
     local ok, tabpage = pcall(vim.api.nvim_win_get_tabpage, target_winid)
     if not ok then
