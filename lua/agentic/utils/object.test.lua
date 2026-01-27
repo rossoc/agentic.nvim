@@ -120,12 +120,16 @@ describe("object utils", function()
 
             local merged_config =
                 Object.merge_config(default_config, user_config)
+
             assert.same(expected_merged_config, merged_config)
+
+            -- Ensure the first object is mutated in place, not a new object created
+            assert.is_true(merged_config == default_config)
         end
     )
 
     describe("handles nil gracefully", function()
-        it("handles nill for keymaps", function()
+        it("handles nil for keymaps", function()
             local default_config = {
                 option1 = true,
                 keymaps = {
