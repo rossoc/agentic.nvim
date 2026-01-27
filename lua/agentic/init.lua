@@ -105,6 +105,12 @@ function Agentic.switch_session(session_id)
     end)
 end
 
+--- Gets the session manager for the current tab
+function Agentic.get_session_manager()
+    local tab_page_id = vim.api.nvim_get_current_tabpage()
+    return SessionRegistry.get_session_for_tab_page(tab_page_id)
+end
+
 --- Lists all sessions for the current tab
 function Agentic.list_sessions()
     local tab_page_id = vim.api.nvim_get_current_tabpage()

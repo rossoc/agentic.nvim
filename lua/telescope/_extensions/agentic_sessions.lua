@@ -1,86 +1,109 @@
-local has_telescope = pcall(require, 'telescope')
+local has_telescope, telescope = pcall(require, "telescope")
 
 if not has_telescope then
-  error('agentic.nvim: Telescope is not installed')
+  error("agentic.nvim: telescope.nvim is not installed or available")
 end
 
-local pickers = require('telescope.pickers')
-local finders = require('telescope.finders')
-local conf = require('telescope.config').values
-local actions = require('telescope.actions')
-local action_state = require('telescope.actions.state')
-
-local SessionRegistry = require('agentic.session_registry')
-local Agentic = require('agentic')
+local pickers = require("telescope.pickers")
+local finders = require("telescope.finders")
+local conf = require("telescope.config").values
+local actions = require("telescope.actions")
+local action_state = require("telescope.actions.state")
+local previewers = require("telescope.previewers")
+local utils = require("telescope.utils")
 
 local M = {}
 
--- Picker for selecting an Agentic session
+--- Get all available agentic sessions
+local function get_agentic_sessions()
+  local sessions = {}
+
+  -- Get the current session manager instance
+  local agentic = require("agentic")
+  local session_manager = agentic.get_session_manager()
+
+  if session_manager and session_manager.sessions then
+    for session_id, session_data in pairs(session_manager.sessions) do
+      -- Get the actual message history from the session
+      local message_history = {}
+
+      -- If the session has a message history, use it
+      if session_data.message_history then
+        message_history = session_data.message_history
+      elseif session_data._message_history then
+        -- Fallback to _message_history if available
+        message_history = session_data._message_history
+      end
+
+      table.insert(sessions, {
+        session_id = session_id,
+        title = string.format("Session: %s", session_id),
+        message_history = message_history,
+        timestamp = session_data.timestamp or "Unknown",
+      })
+    end
+  end
+
+  return sessions
+end
+
+--- Create a telescope picker for agentic sessions
 M.sessions = function(opts)
   opts = opts or {}
 
-  local current_tab = vim.api.nvim_get_current_tabpage()
-  local session_manager = SessionRegistry.get_session_for_tab_page(current_tab)
-
-  if not session_manager then
-    print('No Agentic session manager found for current tab')
-    return
-  end
-
-  -- Get session previews from the session manager
-  local session_previews = session_manager:get_session_previews()
-
-  if #session_previews == 0 then
-    print('No Agentic sessions found for current tab')
-    return
-  end
-
-  -- Get session details for display
-  local session_entries = {}
-  for _, preview in ipairs(session_previews) do
-    local display_text = string.format("%s [%d msgs, %d files]",
-      preview.title,
-      preview.message_count,
-      preview.file_count
-    )
-
-    table.insert(session_entries, {
-      session_id = preview.session_id,
-      title = preview.title,
-      message_count = preview.message_count,
-      file_count = preview.file_count,
-      last_activity = preview.last_activity,
-      display = display_text,
-      ordinal = display_text,
-    })
-  end
+  local sessions = get_agentic_sessions()
 
   pickers.new(opts, {
-    prompt_title = 'Agentic Sessions',
+    prompt_title = "Agentic Sessions",
     finder = finders.new_table {
-      results = session_entries,
+      results = sessions,
       entry_maker = function(entry)
         return {
-          value = entry.session_id,
-          display = entry.display,
-          ordinal = entry.ordinal,
-          title = entry.title,
-          message_count = entry.message_count,
-          file_count = entry.file_count,
-          last_activity = entry.last_activity,
+          value = entry,
+          display = entry.title,
+          ordinal = entry.title,
+          session_id = entry.session_id,
+          -- Add the message history for preview
+          message_history = entry.message_history,
         }
       end,
     },
+    previewer = previewers.new_buffer_previewer {
+      define_preview = function(self, entry, status)
+        local bufnr = self.state.bufnr
+
+        -- Set the buffer content to the session's message history
+        if entry.message_history and #entry.message_history > 0 then
+          vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, entry.message_history)
+        else
+          vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "No messages in this session." })
+        end
+
+        -- Set the filetype to markdown for better rendering
+        vim.api.nvim_buf_set_option(bufnr, "filetype", "markdown")
+      end,
+    },
     sorter = conf.generic_sorter(opts),
-    attach_mappings = function(prompt_bufnr)
+    attach_mappings = function(prompt_bufnr, map)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
-        if selection then
-          actions.close(prompt_bufnr)
-          -- Switch to the selected session
-          Agentic.switch_session(selection.value)
+        actions.close(prompt_bufnr)
+
+        if selection and selection.value then
+          -- Show the chat buffer for the selected session
+          local agentic = require("agentic")
+          local session_manager = agentic.get_session_manager()
+
+          if session_manager then
+            -- Switch to the selected session
+            session_manager:switch_to_session(selection.session_id)
+
+            -- Optionally, toggle the agentic UI to show the selected session
+            agentic.toggle()
+          end
         end
       end)
+
       return true
     end,
   }):find()
