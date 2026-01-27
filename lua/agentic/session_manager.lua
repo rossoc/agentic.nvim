@@ -11,6 +11,7 @@ local Logger = require("agentic.utils.logger")
 local SlashCommands = require("agentic.acp.slash_commands")
 local TodoList = require("agentic.ui.todo_list")
 local SimpleSession = require("agentic.simple_session")
+local BufHelpers = require("agentic.utils.buf_helpers")
 
 --- @class agentic._SessionManagerPrivate
 local P = {}
@@ -579,7 +580,7 @@ function SessionManager:_restore_session_state()
     -- Restore UI state from session
     -- Only update the chat buffer with the saved message history, without clearing other buffers
     -- Use BufHelpers.with_modifiable to ensure the buffer is modifiable
-    require("agentic.utils.buf_helpers").with_modifiable(
+    BufHelpers.with_modifiable(
         self.widget.buf_nrs.chat,
         function()
             vim.api.nvim_buf_set_lines(
