@@ -72,4 +72,35 @@ function SessionRegistry.destroy_session(tab_page_id)
     end
 end
 
+--- Switches to a different session within the tab's session manager
+--- @param tab_page_id? integer
+--- @param session_id string
+--- @return boolean success
+function SessionRegistry.switch_session(tab_page_id, session_id)
+    tab_page_id = tab_page_id ~= nil and tab_page_id
+        or vim.api.nvim_get_current_tabpage()
+    local session = SessionRegistry.sessions[tab_page_id]
+
+    if session then
+        return session:switch_to_session(session_id)
+    end
+
+    return false
+end
+
+--- Gets all session IDs for a tab
+--- @param tab_page_id? integer
+--- @return string[] session_ids
+function SessionRegistry.get_all_sessions(tab_page_id)
+    tab_page_id = tab_page_id ~= nil and tab_page_id
+        or vim.api.nvim_get_current_tabpage()
+    local session = SessionRegistry.sessions[tab_page_id]
+
+    if session then
+        return session:get_all_session_ids()
+    end
+
+    return {}
+end
+
 return SessionRegistry

@@ -10,6 +10,7 @@ local FileSystem = require("agentic.utils.file_system")
 local Logger = require("agentic.utils.logger")
 local SlashCommands = require("agentic.acp.slash_commands")
 local TodoList = require("agentic.ui.todo_list")
+local SimpleSession = require("agentic.simple_session")
 
 --- @class agentic._SessionManagerPrivate
 local P = {}
@@ -33,6 +34,7 @@ function P.invoke_hook(hook_name, data)
 end
 
 --- @class agentic.SessionManager
+--- @field sessions table<string, agentic.SimpleSession>
 --- @field session_id? string
 --- @field tab_page_id integer
 --- @field _is_first_message boolean Whether this is the first message in the session, used to add system info only once
@@ -62,6 +64,7 @@ function SessionManager:new(tab_page_id)
     local FilePicker = require("agentic.ui.file_picker")
 
     self = setmetatable({
+        sessions = {},
         session_id = nil,
         tab_page_id = tab_page_id,
         _is_first_message = true,
@@ -71,7 +74,7 @@ function SessionManager:new(tab_page_id)
 
     local agent = AgentInstance.get_instance(Config.provider, function(_client)
         vim.schedule(function()
-            self:new_session()
+            self:_create_initial_session()
         end)
     end)
 
@@ -375,8 +378,217 @@ function SessionManager:_handle_input_submit(input_text)
     end)
 end
 
---- Create a new session, cancelling any existing one and clearing buffers content
+-- Internal method to create a new session
+function SessionManager:_create_new_session_internal()
+    self.status_animation:start("busy")
+
+    --- @type agentic.acp.ClientHandlers
+    local handlers = {
+        on_error = function(err)
+            Logger.debug("Agent error: ", err)
+
+            self.message_writer:write_message(
+                self.agent:generate_agent_message({
+                    "🐞 Agent Error:",
+                    "",
+                    vim.inspect(err),
+                })
+            )
+        end,
+
+        on_session_update = function(update)
+            self:_on_session_update(update)
+        end,
+
+        on_tool_call = function(tool_call)
+            self.message_writer:write_tool_call_block(tool_call)
+        end,
+
+        on_tool_call_update = function(tool_call_update)
+            self.message_writer:update_tool_call_block(tool_call_update)
+
+            -- pre-emptively clear diff preview when tool call update is received, as it's either done or failed
+            local is_rejection = tool_call_update.status == "failed"
+            self:_clear_diff_in_buffer(
+                tool_call_update.tool_call_id,
+                is_rejection
+            )
+
+            -- I need to remove the permission request if the tool call failed before user granted it
+            -- It could happen for many reasons, like invalid parameters, tool not found, etc.
+            -- Mostly comes from the Agent.
+            if tool_call_update.status == "failed" then
+                self.permission_manager:remove_request_by_tool_call_id(
+                    tool_call_update.tool_call_id
+                )
+            end
+
+            if
+                not self.permission_manager.current_request
+                and #self.permission_manager.queue == 0
+            then
+                self.status_animation:start("generating")
+            end
+        end,
+
+        on_request_permission = function(request, callback)
+            self.status_animation:stop()
+
+            local function wrapped_callback(option_id)
+                callback(option_id)
+
+                local is_rejection = option_id == "reject_once"
+                    or option_id == "reject_always"
+                self:_clear_diff_in_buffer(
+                    request.toolCall.toolCallId,
+                    is_rejection
+                )
+
+                if
+                    not self.permission_manager.current_request
+                    and #self.permission_manager.queue == 0
+                then
+                    self.status_animation:start("generating")
+                end
+            end
+
+            self:_show_diff_in_buffer(request.toolCall.toolCallId)
+            self.permission_manager:add_request(request, wrapped_callback)
+        end,
+    }
+
+    self.agent:create_session(handlers, function(response, err)
+        self.status_animation:stop()
+
+        if err or not response then
+            -- no log here, already logged in create_session
+            return
+        end
+
+        -- Create SimpleSession with the ACP session ID
+        local new_session = SimpleSession:new(response.sessionId)
+        self.sessions[response.sessionId] = new_session
+        self.session_id = response.sessionId  -- Set as active session
+
+        if response.modes then
+            self.agent_modes:set_modes(response.modes)
+
+            local default_mode = self.agent.provider_config.default_mode
+            local can_use_default = default_mode
+                and default_mode ~= response.modes.currentModeId
+                and self.agent_modes:get_mode(default_mode)
+
+            if can_use_default and default_mode then
+                self:_handle_mode_change(default_mode)
+            else
+                if
+                    default_mode and not self.agent_modes:get_mode(default_mode)
+                then
+                    Logger.notify(
+                        string.format(
+                            "Configured default_mode '%s' not available. Using provider default.",
+                            default_mode
+                        ),
+                        vim.log.levels.WARN,
+                        { title = "Agentic" }
+                    )
+                end
+                self:_set_mode_to_chat_header(response.modes.currentModeId)
+            end
+        end
+
+        -- Add initial welcome message after session is created
+        -- Defer to avoid fast event context issues
+        vim.schedule(function()
+            local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+            local provider_name = self.agent.provider_config.name
+            local session_id = self.session_id or "unknown"
+            local welcome_message = string.format(
+                "# Agentic - %s - %s\n- %s\n--- --",
+                provider_name,
+                session_id,
+                timestamp
+            )
+
+            self.message_writer:write_message(
+                self.agent:generate_user_message(welcome_message)
+            )
+        end)
+    end)
+end
+
+--- Create the initial session when SessionManager is initialized
+function SessionManager:_create_initial_session()
+    self:_create_new_session_internal()
+end
+
+--- Create a new session, adding it to the session collection
 function SessionManager:new_session()
+    -- Save state of current session before creating new one
+    self:_save_current_session_state()
+
+    -- Create new session
+    self:_create_new_session_internal()
+end
+
+--- Switch to a different session
+--- @param target_session_id string
+--- @return boolean success
+function SessionManager:switch_to_session(target_session_id)
+    if self.sessions[target_session_id] then
+        self:_save_current_session_state()
+        self.session_id = target_session_id
+        self:_restore_session_state()
+        return true
+    end
+    return false
+end
+
+--- Save the current session's state
+function SessionManager:_save_current_session_state()
+    if not self.session_id or not self.sessions[self.session_id] then return end
+
+    local current_session = self.sessions[self.session_id]
+
+    -- Save current UI state to session
+    current_session.file_paths = self.file_list:get_files()
+    current_session.code_selections = self.code_selection:get_selections()
+    -- Save message history from buffer
+    current_session.message_history = vim.api.nvim_buf_get_lines(
+        self.widget.buf_nrs.chat, 0, -1, false
+    )
+end
+
+--- Restore the current session's state
+function SessionManager:_restore_session_state()
+    if not self.session_id or not self.sessions[self.session_id] then return end
+
+    local current_session = self.sessions[self.session_id]
+
+    -- Restore UI state from session
+    self.widget:clear()
+    vim.api.nvim_buf_set_lines(
+        self.widget.buf_nrs.chat, 0, -1, false,
+        current_session.message_history
+    )
+
+    self.file_list:clear()
+    for _, file_path in ipairs(current_session.file_paths) do
+        self.file_list:add(file_path)
+    end
+
+    self.code_selection:clear()
+    for _, selection in ipairs(current_session.code_selections) do
+        self.code_selection:add(selection)
+    end
+
+    -- Update internal state
+    self.is_generating = false -- reset generation state
+    self._is_first_message = #current_session.message_history == 0
+end
+
+--- Create a new session, cancelling any existing one and clearing buffers content
+function SessionManager:new_session_old()
     self:_cancel_session()
 
     self.status_animation:start("busy")
@@ -519,9 +731,16 @@ end
 
 function SessionManager:_cancel_session()
     if self.session_id then
-        -- only cancel and clear content if there was an session
-        -- Otherwise, it clears selections and files when opening for the first time
+        -- Save state before cancellation
+        self:_save_current_session_state()
+
+        -- Cancel the ACP session
         self.agent:cancel_session(self.session_id)
+
+        -- Remove from our sessions table
+        self.sessions[self.session_id] = nil
+
+        -- Clear UI content
         self.widget:clear()
         self.file_list:clear()
         self.code_selection:clear()
@@ -679,6 +898,64 @@ end
 function SessionManager:destroy()
     self:_cancel_session()
     self.widget:destroy()
+end
+
+--- Get all session IDs
+--- @return string[] session_ids
+function SessionManager:get_all_session_ids()
+    local ids = {}
+    for session_id, _ in pairs(self.sessions) do
+        table.insert(ids, session_id)
+    end
+    return ids
+end
+
+--- Get session previews for the picker
+--- @return table[] previews
+function SessionManager:get_session_previews()
+    local previews = {}
+    for session_id, session in pairs(self.sessions) do
+        local preview = {
+            session_id = session_id,
+            title = self:_generate_session_title(session),
+            last_activity = self:_get_last_message_time(session),
+            message_count = #session.message_history,
+            file_count = #session.file_paths,
+        }
+        table.insert(previews, preview)
+    end
+    return previews
+end
+
+--- Generate a session title from its first message
+--- @param session agentic.SimpleSession
+--- @return string title
+function SessionManager:_generate_session_title(session)
+    if #session.message_history > 0 then
+        local first_message = session.message_history[1]
+        -- Extract a meaningful title from the first message
+        local lines = vim.split(first_message, "\n")
+        for _, line in ipairs(lines) do
+            line = vim.trim(line)
+            if line ~= "" and not line:match("^#") then  -- Skip markdown headers
+                return line:len() > 50 and line:sub(1, 50) .. "..." or line
+            end
+        end
+    end
+    return "Untitled Session"
+end
+
+--- Get the time of the last message
+--- @param session agentic.SimpleSession
+--- @return string time
+function SessionManager:_get_last_message_time(session)
+    if #session.message_history > 0 then
+        -- This would need to parse timestamps from messages
+        -- For now, return a placeholder
+        local time_str = os.date("%H:%M:%S")
+        return time_str --[[@as string]]
+    end
+    return "No messages"
 end
 
 return SessionManager

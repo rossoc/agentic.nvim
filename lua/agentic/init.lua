@@ -87,12 +87,37 @@ end
 --- Destroys the current Chat session and starts a new one
 --- @param opts agentic.ui.ChatWidget.ShowOpts|nil
 function Agentic.new_session(opts)
-    local session = SessionRegistry.new_session()
-    if session then
+    SessionRegistry.get_session_for_tab_page(nil, function(session)
+        session:new_session()
         if not opts or opts.auto_add_to_context ~= false then
             session:add_selection_or_file_to_session()
         end
         session.widget:show(opts)
+    end)
+end
+
+--- Switches to a different session
+--- @param session_id string
+function Agentic.switch_session(session_id)
+    SessionRegistry.get_session_for_tab_page(nil, function(session)
+        session:switch_to_session(session_id)
+        session.widget:show()
+    end)
+end
+
+--- Lists all sessions for the current tab
+function Agentic.list_sessions()
+    local tab_page_id = vim.api.nvim_get_current_tabpage()
+    local session_ids = SessionRegistry.get_all_sessions(tab_page_id)
+
+    if #session_ids == 0 then
+        print("No sessions found for current tab")
+        return
+    end
+
+    print("Sessions for current tab:")
+    for i, session_id in ipairs(session_ids) do
+        print(string.format("%d. %s", i, session_id))
     end
 end
 
@@ -112,6 +137,55 @@ end
 local traps_set = false
 local cleanup_group = vim.api.nvim_create_augroup("AgenticCleanup", {
     clear = true,
+})
+
+-- Register commands
+vim.api.nvim_create_user_command("AgenticSwitchSession", function(opts)
+    if opts.args and opts.args ~= "" then
+        Agentic.switch_session(opts.args)
+    else
+        print("Usage: :AgenticSwitchSession <session_id>")
+    end
+end, {
+    nargs = "?",
+    desc = "Switch to a different Agentic session",
+    complete = function(arg_lead)
+        -- Get all session IDs for completion
+        local tab_page_id = vim.api.nvim_get_current_tabpage()
+        local session_ids = SessionRegistry.get_all_sessions(tab_page_id)
+        local matches = {}
+        for _, session_id in ipairs(session_ids) do
+            if session_id:find(arg_lead, 1, true) then
+                table.insert(matches, session_id)
+            end
+        end
+        return matches
+    end
+})
+
+vim.api.nvim_create_user_command("AgenticListSessions", function()
+    Agentic.list_sessions()
+end, {
+    desc = "List all Agentic sessions for current tab",
+})
+
+vim.api.nvim_create_user_command("AgenticSelectSession", function()
+    -- Try to load and use the telescope extension
+    local has_telescope = pcall(require, 'telescope')
+    if not has_telescope then
+        print('Telescope is not installed')
+        return
+    end
+
+    local has_agentic_ext, agentic_ext = pcall(require, 'telescope._extensions.agentic_sessions')
+    if not has_agentic_ext then
+        print('Agentic Telescope extension is not available')
+        return
+    end
+
+    agentic_ext.sessions()
+end, {
+    desc = "Select an Agentic session using Telescope",
 })
 
 --- Merges the current user configuration with the default configuration
