@@ -513,6 +513,9 @@ function SessionManager:_create_new_session_internal()
             self.message_writer:write_message(
                 self.agent:generate_user_message(welcome_message)
             )
+
+            -- After creating a new session, ensure the UI is updated to reflect the new session's state
+            self:_restore_session_state()
         end)
     end)
 end
@@ -529,6 +532,14 @@ function SessionManager:new_session()
 
     -- Create new session
     self:_create_new_session_internal()
+
+    -- Ensure the UI is updated to reflect the new session's state
+    -- This is important to clear the old content and show the new session's content
+    -- Note: The actual UI update happens in the callback of _create_new_session_internal
+    -- but we schedule an additional update to ensure the UI is refreshed
+    vim.schedule(function()
+        self:_restore_session_state()
+    end)
 end
 
 --- Switch to a different session
@@ -566,10 +577,16 @@ function SessionManager:_restore_session_state()
     local current_session = self.sessions[self.session_id]
 
     -- Restore UI state from session
-    self.widget:clear()
-    vim.api.nvim_buf_set_lines(
-        self.widget.buf_nrs.chat, 0, -1, false,
-        current_session.message_history
+    -- Only update the chat buffer with the saved message history, without clearing other buffers
+    -- Use BufHelpers.with_modifiable to ensure the buffer is modifiable
+    require("agentic.utils.buf_helpers").with_modifiable(
+        self.widget.buf_nrs.chat,
+        function()
+            vim.api.nvim_buf_set_lines(
+                self.widget.buf_nrs.chat, 0, -1, false,
+                current_session.message_history
+            )
+        end
     )
 
     self.file_list:clear()
@@ -725,6 +742,9 @@ function SessionManager:new_session_old()
             self.message_writer:write_message(
                 self.agent:generate_user_message(welcome_message)
             )
+
+            -- After creating a new session, ensure the UI is updated to reflect the new session's state
+            self:_restore_session_state()
         end)
     end)
 end
