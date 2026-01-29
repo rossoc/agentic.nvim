@@ -25,46 +25,12 @@ local WindowDecoration = require("agentic.ui.window_decoration")
 --- @class agentic.ui.ChatWidget.ShowOpts : agentic.ui.ChatWidget.AddToContextOpts
 --- @field auto_add_to_context? boolean Automatically add current selection or file to context when opening
 
---- @type agentic.ui.ChatWidget.Headers
-local WINDOW_HEADERS = {
-    chat = {
-        title = "󰻞 Agentic Chat",
-        suffix = "<S-Tab>: change mode",
-    },
-    input = { title = "󰦨 Prompt", suffix = "<C-s>: submit" },
-    code = {
-        title = "󰪸 Selected Code Snippets",
-        suffix = "d: remove block",
-    },
-    files = {
-        title = " Referenced Files",
-        suffix = "d: remove file",
-    },
-    todos = {
-        title = " TODO Items",
-    },
-}
-
---- @param winid integer
---- @param parts agentic.ui.ChatWidget.HeaderParts
-local function render_header_parts(winid, parts)
-    local pieces = { parts.title }
-    if parts.context ~= nil then
-        table.insert(pieces, parts.context)
-    end
-    if parts.suffix ~= nil then
-        table.insert(pieces, parts.suffix)
-    end
-    WindowDecoration.render_window_header(winid, pieces)
-end
-
 --- A sidebar-style chat widget with multiple windows stacked vertically
 --- The main chat window is the first, and contains the width, the below ones adapt to its size
 --- @class agentic.ui.ChatWidget
 --- @field tab_page_id integer
 --- @field buf_nrs agentic.ui.ChatWidget.BufNrs
 --- @field win_nrs agentic.ui.ChatWidget.WinNrs
---- @field headers agentic.ui.ChatWidget.Headers
 --- @field on_submit_input fun(prompt: string) external callback to be called when user submits the input
 local ChatWidget = {}
 ChatWidget.__index = ChatWidget
@@ -74,7 +40,6 @@ ChatWidget.__index = ChatWidget
 function ChatWidget:new(tab_page_id, on_submit_input)
     self = setmetatable({}, self)
 
-    self.headers = vim.deepcopy(WINDOW_HEADERS)
     self.win_nrs = {}
 
     self.on_submit_input = on_submit_input
@@ -160,17 +125,23 @@ end
 function ChatWidget:hide()
     vim.cmd("stopinsert")
 
-    local fallback_winid = self:find_first_non_widget_window()
+    -- Check if we're on the correct tabpage before trying to find/create fallback window
+    local current_tabpage = vim.api.nvim_get_current_tabpage()
+    local should_create_fallback = current_tabpage == self.tab_page_id
 
-    if not fallback_winid then
-        -- Fallback: create a new left window to avoid closing the last window error
-        local created_winid = self:open_left_window()
-        if not created_winid then
-            Logger.notify(
-                "Failed to create fallback window; cannot hide widget safely, run `:tabclose` to close the tab instead.",
-                vim.log.levels.ERROR
-            )
-            return
+    if should_create_fallback then
+        local fallback_winid = self:find_first_non_widget_window()
+
+        if not fallback_winid then
+            -- Fallback: create a new left window to avoid closing the last window error
+            local created_winid = self:open_left_window()
+            if not created_winid then
+                Logger.notify(
+                    "Failed to create fallback window; cannot hide widget safely, run `:tabclose` to close the tab instead.",
+                    vim.log.levels.ERROR
+                )
+                return
+            end
         end
     end
 
@@ -551,33 +522,47 @@ end
 
 --- Binds events to change the suffix header texts based on current mode keymaps
 --- For the Chat and Input buffers only
---- @private
 function ChatWidget:_bind_events_to_change_headers()
+    local tab_page_id = self.tab_page_id
+
     for _, bufnr in ipairs({ self.buf_nrs.chat, self.buf_nrs.input }) do
         vim.api.nvim_create_autocmd("ModeChanged", {
             buffer = bufnr,
             callback = function()
                 vim.schedule(function()
+                    -- Check if tabpage is still valid before accessing vim.t
+                    -- I couldn't test it, it seems to only happen from command -> normal, not from insert -> normal
+                    if not vim.api.nvim_tabpage_is_valid(tab_page_id) then
+                        return
+                    end
+
+                    -- Get headers from tabpage-local storage (must reassign after modification)
+                    local headers =
+                        WindowDecoration.get_headers_state(tab_page_id)
+
                     local mode = vim.fn.mode()
                     local change_mode_key =
                         find_keymap(Config.keymaps.widget.change_mode, mode)
 
                     if change_mode_key ~= nil then
-                        self.headers.chat.suffix =
+                        headers.chat.suffix =
                             string.format("%s: change mode", change_mode_key)
                     else
-                        self.headers.chat.suffix = nil
+                        headers.chat.suffix = nil
                     end
 
                     local submit_key =
                         find_keymap(Config.keymaps.prompt.submit, mode)
 
                     if submit_key ~= nil then
-                        self.headers.input.suffix =
+                        headers.input.suffix =
                             string.format("%s: submit", submit_key)
                     else
-                        self.headers.input.suffix = nil
+                        headers.input.suffix = nil
                     end
+
+                    -- Reassign to persist changes
+                    WindowDecoration.set_headers_state(tab_page_id, headers)
 
                     self:render_header("chat")
                     self:render_header("input")
@@ -619,7 +604,6 @@ end
 
 --- Calculate dynamic height based on buffer line count
 --- Add 1 for visual padding to prevent last line cutoff because of the header
---- @private
 --- @param bufnr number
 --- @param max_height number
 --- @return integer height
@@ -630,7 +614,6 @@ end
 
 --- Open or resize a dynamic height window
 --- Creates window if it doesn't exist, resizes if it does
---- @private
 --- @param window_name agentic.ui.ChatWidget.PanelNames Window identifier (code, files, todos)
 --- @param open_win_opts table Options to pass to _open_win() for window creation
 --- @param max_height number Maximum height for the window
@@ -679,69 +662,14 @@ function ChatWidget:_open_or_resize_dynamic_window(
 end
 
 --- @param window_name agentic.ui.ChatWidget.PanelNames
-function ChatWidget:render_header(window_name)
-    local winid = self.win_nrs[window_name]
-    if not winid then
+--- @param context string|nil Optional context to set in header (e.g., "Mode: chat", "3 files")
+function ChatWidget:render_header(window_name, context)
+    local bufnr = self.buf_nrs[window_name]
+    if not bufnr then
         return
     end
 
-    local user_header = Config.headers and Config.headers[window_name]
-    local dynamic_header = self.headers[window_name]
-
-    if user_header == nil then
-        render_header_parts(winid, dynamic_header)
-        return
-    end
-
-    if type(user_header) == "function" then
-        local ok, custom_header = pcall(user_header, dynamic_header)
-        if not ok then
-            Logger.notify(
-                string.format(
-                    "Error in custom header function for '%s': %s",
-                    window_name,
-                    custom_header
-                )
-            )
-            render_header_parts(winid, dynamic_header)
-            return
-        end
-        if custom_header == nil or custom_header == "" then
-            -- Clear winbar (WindowDecoration handles empty concat by disabling winbar)
-            WindowDecoration.render_window_header(winid, {})
-            return
-        end
-        if type(custom_header) ~= "string" then
-            Logger.notify(
-                string.format(
-                    "Custom header function for '%s' must return string|nil, got %s",
-                    window_name,
-                    type(custom_header)
-                )
-            )
-            render_header_parts(winid, dynamic_header)
-            return
-        end
-        WindowDecoration.render_window_header(winid, { custom_header })
-        return
-    end
-
-    --- @type agentic.ui.ChatWidget.HeaderParts
-    local merged_header = dynamic_header
-
-    if type(user_header) == "table" then
-        merged_header = vim.tbl_extend("force", dynamic_header, user_header) --[[@as agentic.ui.ChatWidget.HeaderParts]]
-    else
-        Logger.notify(
-            string.format(
-                "Header for '%s' must be function|table|nil, got %s",
-                window_name,
-                type(user_header)
-            )
-        )
-    end
-
-    render_header_parts(winid, merged_header)
+    WindowDecoration.render_header(bufnr, window_name, context)
 end
 
 function ChatWidget:close_code_window()
