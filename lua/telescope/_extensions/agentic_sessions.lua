@@ -80,7 +80,7 @@ M.sessions = function(opts)
         end
 
         -- Set the filetype to markdown for better rendering
-        vim.api.nvim_buf_set_option(bufnr, "filetype", "markdown")
+        vim.api.nvim_set_option_value("filetype", "markdown", {buf = bufnr})
       end,
     },
     sorter = conf.generic_sorter(opts),
