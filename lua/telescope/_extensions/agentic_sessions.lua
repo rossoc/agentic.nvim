@@ -21,7 +21,7 @@ local function get_agentic_sessions()
   local agentic = require("agentic")
   local session_manager = agentic.get_session_manager()
 
-  if session_manager and session_manager.sessions then
+  if session_manager then
       sessions = session_manager:get_session_previews()
   end
 
@@ -82,11 +82,13 @@ M.sessions = function(opts)
           local session_manager = agentic.get_session_manager()
 
           if session_manager then
-            -- Switch to the selected session
-            session_manager:switch_to_session(selection.session_id)
-
-            -- Optionally, toggle the agentic UI to show the selected session
-            agentic.open()
+            local switched = session_manager:switch_to_session(selection.session_id)
+              if switched then
+                -- Toggle the agentic UI to show the selected session
+                agentic.open()
+              else
+                vim.notify("Failed to switch to session: " .. selection.session_id, vim.log.levels.WARN)
+              end
           end
         end
       end)

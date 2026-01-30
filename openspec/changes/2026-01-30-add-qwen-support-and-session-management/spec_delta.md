@@ -3,6 +3,7 @@
 ## Changes to Configuration
 
 ### Added Qwen Provider Configuration
+
 ```diff
 + ["qwen-acp"] = {
 +     name = "Qwen ACP",
@@ -18,6 +19,7 @@
 ## Changes to Session Management
 
 ### Enhanced SessionManager Class
+
 ```diff
 + --- @field sessions table<string, agentic.SimpleSession>
 + --- @field session_id? string
@@ -45,6 +47,7 @@
 ## Changes to Agent Instance
 
 ### Added Qwen Case Handling
+
 ```diff
 + elseif provider_name == "qwen-acp" then
 +     local QwenACPAdapter = require("agentic.acp.adapters.qwen_acp_adapter")
@@ -54,11 +57,15 @@
 ## New Files Added
 
 ### Qwen ACP Adapter
+
 - `lua/agentic/acp/adapters/qwen_acp_adapter.lua`
 
 ### Telescope Extension
+
 - `lua/telescope/_extensions/agentic_sessions.lua`
 - `lua/telescope/_extensions/agentic_sessions/setup.lua`
 
 ### Simple Session Model
+
 - `lua/agentic/simple_session.lua`
+

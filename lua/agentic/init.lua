@@ -106,14 +106,15 @@ function Agentic.list_sessions()
     local session_ids = SessionRegistry.get_all_sessions(tab_page_id)
 
     if #session_ids == 0 then
-        print("No sessions found for current tab")
+        Logger.notify("No sessions found for current tab", vim.log.levels.INFO)
         return
     end
 
-    print("Sessions for current tab:")
+    local lines = { "Sessions for current tab:" }
     for i, session_id in ipairs(session_ids) do
-        print(string.format("%d. %s", i, session_id))
+        table.insert(lines, string.format("%d. %s", i, session_id))
     end
+    Logger.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end
 
 --- Stops the agent's current generation or tool execution

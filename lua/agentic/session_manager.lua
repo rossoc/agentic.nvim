@@ -615,76 +615,6 @@ function SessionManager:get_handlers()
     return handlers
 end
 
---- Create a new session, cancelling any existing one and clearing buffers content
-function SessionManager:new_session_old()
-    self:_cancel_session()
-
-    self.status_animation:start("busy")
-
-    self.agent:create_session(self:get_handlers(), function(response, err)
-        self.status_animation:stop()
-
-        if err or not response then
-            -- no log here, already logged in create_session
-            self.session_id = nil
-            return
-        end
-
-        self.session_id = response.sessionId
-
-        if response.modes then
-            self.agent_modes:set_modes(response.modes)
-
-            local default_mode = self.agent.provider_config.default_mode
-            local can_use_default = default_mode
-                and default_mode ~= response.modes.currentModeId
-                and self.agent_modes:get_mode(default_mode)
-
-            if can_use_default and default_mode then
-                self:_handle_mode_change(default_mode)
-            else
-                if
-                    default_mode and not self.agent_modes:get_mode(default_mode)
-                then
-                    Logger.notify(
-                        string.format(
-                            "Configured default_mode '%s' not available. Using provider default.",
-                            default_mode
-                        ),
-                        vim.log.levels.WARN,
-                        { title = "Agentic" }
-                    )
-                end
-                self:_set_mode_to_chat_header(response.modes.currentModeId)
-            end
-        end
-
-        -- Reset first message flag for new session, so system info is added again for this session
-        self._is_first_message = true
-
-        -- Add initial welcome message after session is created
-        -- Defer to avoid fast event context issues
-        vim.schedule(function()
-            local timestamp = os.date("%Y-%m-%d %H:%M:%S")
-            local provider_name = self.agent.provider_config.name
-            local session_id = self.session_id or "unknown"
-            local welcome_message = string.format(
-                "# Agentic - %s - %s\n- %s\n--- --",
-                provider_name,
-                session_id,
-                timestamp
-            )
-
-            self.message_writer:write_message(
-                self.agent:generate_user_message(welcome_message)
-            )
-
-            -- After creating a new session, ensure the UI is updated to reflect the new session's state
-            self:_restore_session_state()
-        end)
-    end)
-end
-
 function SessionManager:_cancel_session()
     if self.session_id then
         -- Save state before cancellation
@@ -881,24 +811,6 @@ function SessionManager:get_session_previews()
         table.insert(previews, preview)
     end
     return previews
-end
-
---- Generate a session title from its first message
---- @param session agentic.SimpleSession
---- @return string title
-function SessionManager:_generate_session_title(session)
-    if #session.message_history > 0 then
-        local first_message = session.message_history[1]
-        -- Extract a meaningful title from the first message
-        local lines = vim.split(first_message, "\n")
-        for _, line in ipairs(lines) do
-            line = vim.trim(line)
-            if line ~= "" and not line:match("^#") then  -- Skip markdown headers
-                return line:len() > 50 and line:sub(1, 50) .. "..." or line
-            end
-        end
-    end
-    return "Untitled Session"
 end
 
 return SessionManager

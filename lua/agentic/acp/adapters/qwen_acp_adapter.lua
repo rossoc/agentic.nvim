@@ -71,11 +71,13 @@ function QwenACPAdapter:_handle_tool_call(session_id, update)
             message.argument = FileSystem.to_smart_path(location.path)
         end
     elseif kind == "execute" then
+        local title = update.title or ""
         --- Qwen "execute" title format:
         --- "command [context maybe path] (optional description)"
-        message.argument = vim.trim(vim.split(update.title, " %[")[1] or "")
+        message.argument = vim.trim(vim.split(title, " %[")[1] or "")
 
-        local desc = update.title:match("%((.-)%)")
+        local desc = title:match("%((.-)%)")
+
         if desc then
             message.body = vim.split(desc, "\n")
         end
@@ -98,7 +100,10 @@ function QwenACPAdapter:_handle_tool_call_update(session_id, update)
     if update.content and update.content[1] then
         local content = update.content[1]
 
-        if content.type == "content" then
+        if content.type == "content"
+            and content.content
+            and content.content.text
+        then
             message.body = content.content
                 and vim.split(content.content.text, "\n")
         end
