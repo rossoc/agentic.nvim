@@ -446,6 +446,7 @@ function ChatWidget:_create_new_buf(opts)
         bufhidden = "hide",
         buflisted = false,
         modifiable = false,
+        textwidth = 0,
     }, opts)
 
     for key, value in pairs(config) do

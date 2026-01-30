@@ -66,6 +66,16 @@ local ConfigDefault = {
             },
         },
 
+        ["qwen-acp"] = {
+            name = "Qwen ACP",
+            command = "qwen",
+            args = { "--acp", "--chat-recording", "false" },
+            env = {
+                NODE_NO_WARNINGS = "1",
+                IS_AI_TERMINAL = "1",
+            },
+        },
+
         ["codex-acp"] = {
             name = "Codex ACP",
             -- https://github.com/zed-industries/codex-acp/releases
