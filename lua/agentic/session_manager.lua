@@ -872,6 +872,9 @@ function SessionManager:get_session_previews()
     self:_save_current_session_state()
     local previews = {}
     for session_id, session in pairs(self.sessions) do
+        if session.title == "Untitled Session" then
+            self:_generate_session_title(session)
+        end
         local preview = {
             session_id = session_id,
             title = session.title,
@@ -883,22 +886,33 @@ function SessionManager:get_session_previews()
     return previews
 end
 
---- Generate a session title from its first message
+--- Generate a session title from its message history using qwen command
 --- @param session agentic.SimpleSession
---- @return string title
 function SessionManager:_generate_session_title(session)
+    vim.schedule(function()
     if #session.message_history > 0 then
-        local first_message = session.message_history[1]
-        -- Extract a meaningful title from the first message
-        local lines = vim.split(first_message, "\n")
-        for _, line in ipairs(lines) do
-            line = vim.trim(line)
-            if line ~= "" and not line:match("^#") then  -- Skip markdown headers
-                return line:len() > 50 and line:sub(1, 50) .. "..." or line
-            end
-        end
+        local history_text = table.concat(session.message_history, "\n\n")
+
+        local prompt = "Generate a SHORT, meaningful title (maximum 30 characters) for this conversation. Only return the title without any additional text or quotes:\n\n" .. history_text
+
+        local Job = require('plenary.job')
+
+        Job:new({
+            'qwen',
+            writer = prompt,
+            on_exit = vim.schedule_wrap(function(job)
+                local result = job:result()
+                if result and #result > 0 then
+                    local title = table.concat(result, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+                    if title and title ~= "" then
+                        session.title = title:len() > 60 and title:sub(1, 60) .. "..." or title
+                    end
+                end
+            end),
+        }):start()
+    else
     end
-    return "Untitled Session"
+end)
 end
 
 return SessionManager
