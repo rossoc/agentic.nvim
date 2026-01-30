@@ -57,8 +57,11 @@ M.sessions = function(opts)
         -- Set the buffer content to the session's message history
         if entry.message_history and #entry.message_history > 0 then
           vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, entry.message_history)
-          local line_count = vim.api.nvim_buf_line_count(bufnr)
-          vim.api.nvim_win_set_cursor(0, {line_count, 0})
+          vim.schedule(function()
+            vim.api.nvim_buf_call(bufnr, function()
+            vim.cmd([[normal! G]])
+            end)
+          end)
 
         else
           vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "No messages in this session." })
