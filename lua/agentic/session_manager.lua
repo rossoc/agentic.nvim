@@ -78,7 +78,6 @@ function SessionManager:new(tab_page_id)
 
     self.agent = agent
     self:_init_ui()
-    self:_send_heading()
     return self
 end
 
@@ -98,6 +97,7 @@ function SessionManager:_init_ui()
 
     self.message_writer = MessageWriter:new(self.widget.buf_nrs.chat)
     self.status_animation = StatusAnimation:new(self.widget.buf_nrs.chat)
+    self.status_animation:start("busy")
 
     self.permission_manager = PermissionManager:new(self.message_writer)
 
@@ -427,15 +427,15 @@ function SessionManager:_create_new_session()
                 self:_set_mode_to_chat_header(response.modes.currentModeId)
             end
         end
+        self:_send_heading()
     end)
 end
 
 --- Create a new session, adding it to the session collection
 function SessionManager:new_session()
     self:_save_current_session_state()
+    self:_clear_ui()
     self:_create_new_session()
-    self:_restore_session_state()
-    self:_send_heading()
 end
 
 function SessionManager:_send_heading()
@@ -455,6 +455,24 @@ function SessionManager:_send_heading()
         )
 
     end)
+end
+
+function SessionManager:_clear_ui()
+    if not self.session_id or not self.sessions[self.session_id] then return end
+
+    BufHelpers.with_modifiable(
+        self.widget.buf_nrs.chat,
+        function()
+            vim.api.nvim_buf_set_lines(
+                self.widget.buf_nrs.chat, 0, -1, false,
+                {}
+            )
+        end
+    )
+
+    self.file_list:clear()
+    self.code_selection:clear()
+    self.is_generating = false
 end
 
 --- Switch to a different session
