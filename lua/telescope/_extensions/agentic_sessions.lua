@@ -1,4 +1,4 @@
-local has_telescope, telescope = pcall(require, "telescope")
+local has_telescope = pcall(require, "telescope")
 
 if not has_telescope then
   error("agentic.nvim: telescope.nvim is not installed or available")
@@ -10,7 +10,6 @@ local conf = require("telescope.config").values
 local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 local previewers = require("telescope.previewers")
-local utils = require("telescope.utils")
 
 local M = {}
 
@@ -51,7 +50,7 @@ M.sessions = function(opts)
       end,
     },
     previewer = previewers.new_buffer_previewer {
-      define_preview = function(self, entry, status)
+      define_preview = function(self, entry, _status)
         local bufnr = self.state.bufnr
 
         -- Set the buffer content to the session's message history
@@ -72,7 +71,7 @@ M.sessions = function(opts)
       end,
     },
     sorter = conf.generic_sorter(opts),
-    attach_mappings = function(prompt_bufnr, map)
+    attach_mappings = function(prompt_bufnr, _map)
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
         actions.close(prompt_bufnr)

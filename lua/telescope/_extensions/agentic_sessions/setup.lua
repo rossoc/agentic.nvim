@@ -1,11 +1,11 @@
-local has_telescope, telescope = pcall(require, "telescope")
+local has_telescope = pcall(require, "telescope")
 
 if not has_telescope then
   error("agentic.nvim: telescope.nvim is not installed or available")
 end
 
 require("telescope").register_extension {
-  setup = function(ext_config, config)
+  setup = function(_ext_config, _config)
     -- ext_config is the table that gets passed in to `require("telescope").load_extension(...)`
     -- config is the global telescope config
   end,

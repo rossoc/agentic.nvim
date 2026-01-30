@@ -41,7 +41,7 @@ function QwenACPAdapter:_handle_tool_call(session_id, update)
         kind == "read"
         and (not update.locations or vim.tbl_isempty(update.locations))
     then
-        -- gemini read file system and send empty properties, just ignore
+        -- Qwen read file system and send empty properties, just ignore
         return
     end
 
