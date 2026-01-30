@@ -186,7 +186,11 @@ local ConfigDefault = {
             paste_image = {
                 {
                     "<localleader>p",
-                    mode = { "n", "i" },
+                    mode = { "n" },
+                },
+                {
+                    "<C-v>", -- Same as Claude-code in insert mode
+                    mode = { "i" },
                 },
             },
         },
