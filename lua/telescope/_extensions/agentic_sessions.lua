@@ -23,25 +23,7 @@ local function get_agentic_sessions()
   local session_manager = agentic.get_session_manager()
 
   if session_manager and session_manager.sessions then
-    for session_id, session_data in pairs(session_manager.sessions) do
-      -- Get the actual message history from the session
-      local message_history = {}
-
-      -- If the session has a message history, use it
-      if session_data.message_history then
-        message_history = session_data.message_history
-      elseif session_data._message_history then
-        -- Fallback to _message_history if available
-        message_history = session_data._message_history
-      end
-
-      table.insert(sessions, {
-        session_id = session_id,
-        title = string.format("Session: %s", session_id),
-        message_history = message_history,
-        timestamp = session_data.timestamp or "Unknown",
-      })
-    end
+      sessions = session_manager:get_session_previews()
   end
 
   return sessions
@@ -75,6 +57,9 @@ M.sessions = function(opts)
         -- Set the buffer content to the session's message history
         if entry.message_history and #entry.message_history > 0 then
           vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, entry.message_history)
+          local line_count = vim.api.nvim_buf_line_count(bufnr)
+          vim.api.nvim_win_set_cursor(0, {line_count, 0})
+
         else
           vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "No messages in this session." })
         end
@@ -99,7 +84,7 @@ M.sessions = function(opts)
             session_manager:switch_to_session(selection.session_id)
 
             -- Optionally, toggle the agentic UI to show the selected session
-            agentic.toggle()
+            agentic.open()
           end
         end
       end)

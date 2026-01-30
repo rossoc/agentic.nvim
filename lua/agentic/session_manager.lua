@@ -873,10 +873,9 @@ function SessionManager:get_session_previews()
     for session_id, session in pairs(self.sessions) do
         local preview = {
             session_id = session_id,
-            title = self:_generate_session_title(session),
-            last_activity = self:_get_last_message_time(session),
+            title = session.title,
             message_count = #session.message_history,
-            file_count = #session.file_paths,
+            message_history = session.message_history,
         }
         table.insert(previews, preview)
     end
@@ -899,19 +898,6 @@ function SessionManager:_generate_session_title(session)
         end
     end
     return "Untitled Session"
-end
-
---- Get the time of the last message
---- @param session agentic.SimpleSession
---- @return string time
-function SessionManager:_get_last_message_time(session)
-    if #session.message_history > 0 then
-        -- This would need to parse timestamps from messages
-        -- For now, return a placeholder
-        local time_str = os.date("%H:%M:%S")
-        return time_str --[[@as string]]
-    end
-    return "No messages"
 end
 
 return SessionManager
